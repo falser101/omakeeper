@@ -1,0 +1,9 @@
+/cli/target/
+**/*.rs.bk
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+*.log
+/dist/

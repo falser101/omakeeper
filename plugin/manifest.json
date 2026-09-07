@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.falser.omakeeper",
+  "name": "Omakeeper",
+  "version": "0.1.0",
+  "author": "falser",
+  "license": "MIT",
+  "description": "Omarchy system maintenance launcher — clean, purge, installers, and more via the omakeeper CLI",
+  "kinds": ["overlay"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Overlay.qml"
+  }
+}
