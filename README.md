@@ -2,71 +2,91 @@
 
 System maintenance for [Omarchy](https://omarchy.org/) — clean caches, purge build artifacts, remove leftover installers, and (soon) uninstall, optimize, analyze, and monitor.
 
-Inspired by the workflow of [Mole](https://github.com/tw93/Mole), rebuilt for Arch/Omarchy with a Rust CLI and an Omarchy shell plugin. Branding uses Omarchy icon themes, not solar-system planets.
+Inspired by the workflow of [Mole](https://github.com/tw93/Mole), rebuilt for Arch/Omarchy with a **Rust CLI** and an **Omarchy shell plugin**. Branding uses Omarchy menu styling and icon semantics, not solar-system planets.
 
-## Status
-
-Phase 1 MVP in progress:
+## Status (Phase 0–1)
 
 | Command | Status |
 |---------|--------|
-| `omakeeper` (menu) | scaffolding |
-| `omakeeper clean` | dry-run + apply (user caches) |
-| `omakeeper purge` | scan + confirm |
-| `omakeeper installer` | scan Downloads installers |
-| `omakeeper history` | operation log |
-| `omakeeper whitelist` | protect paths from clean |
+| `omakeeper` (interactive menu) | ✅ |
+| `omakeeper clean` | ✅ dry-run + apply (user caches) |
+| `omakeeper purge` | ✅ scan + confirm |
+| `omakeeper installer` | ✅ Downloads / Desktop leftovers |
+| `omakeeper history` | ✅ |
+| `omakeeper whitelist` | ✅ |
 | uninstall / optimize / analyze / status | planned |
-| Omarchy plugin UI | overlay shell |
+| Omarchy overlay launcher | ✅ (opens CLI in terminal for now) |
 
 ## Install CLI
+
+Requires Rust (`rustup` or distro `rust` package).
 
 ```bash
 cd cli
 cargo install --path .
 ```
 
-Or for development:
+Ensure `~/.cargo/bin` is on your `PATH`. Optional short alias:
 
 ```bash
-cd cli && cargo build --release
-./target/release/omakeeper --help
+ln -sf "$(which omakeeper)" ~/.local/bin/ok
 ```
 
-Optional short alias:
+## Install plugin (local)
+
+Omarchy rejects symlinked plugin folders; copy or use `omarchy plugin add` with a git URL once published.
 
 ```bash
-ln -s "$(which omakeeper)" ~/.local/bin/ok
-```
-
-## Install plugin
-
-```bash
-omarchy plugin add /home/falser/Projects/omakeeper/plugin --enable
-# or from git once published:
-# omarchy plugin add https://github.com/<you>/omakeeper.git --enable
+PLUGIN="$HOME/.config/omarchy/plugins/io.github.falser.omakeeper"
+mkdir -p "$PLUGIN"
+cp -a plugin/. "$PLUGIN/"
+omarchy plugin enable io.github.falser.omakeeper
 ```
 
 Summon:
 
 ```bash
-omarchy-shell shell summon io.github.falser.omakeeper
+omarchy-shell shell summon io.github.falser.omakeeper '{}'
+# or toggle
+omarchy-shell shell toggle io.github.falser.omakeeper
+```
+
+Suggested Hyprland binding (user config):
+
+```lua
+o.bind({ "SUPER", "SHIFT" }, "O", function()
+  os.execute("omarchy-shell shell toggle io.github.falser.omakeeper &")
+end)
+```
+
+## Usage
+
+```bash
+omakeeper                     # interactive menu
+omakeeper clean --dry-run     # preview caches
+omakeeper clean               # delete after confirm
+omakeeper purge --dry-run
+omakeeper installer --dry-run
+omakeeper history
+omakeeper whitelist add ~/.cache/something-to-keep
+omakeeper clean --dry-run --json
 ```
 
 ## Safety
 
-- Prefer `omakeeper clean --dry-run` before deleting.
+- Prefer `--dry-run` before deleting.
 - Whitelist paths with `omakeeper whitelist add <path>`.
-- Destructive actions ask for confirmation unless `--yes` is passed after a dry-run review.
-- Operations are logged under `~/.local/share/omakeeper/operations.log`.
+- Destructive actions ask for confirmation unless `--yes` is passed after review.
+- Logs: `~/.local/share/omakeeper/operations.log`
+- Config: `~/.config/omakeeper/`
 
 ## Layout
 
 ```
 omakeeper/
-  cli/       Rust CLI (omakeeper)
+  cli/       Rust CLI
   plugin/    Omarchy Quickshell overlay
-  docs/      JSON contracts and design notes
+  docs/      JSON contracts
 ```
 
 ## License

@@ -66,8 +66,8 @@ Item {
     root.dismiss()
     // Open a terminal running the CLI so the user can review dry-run output.
     Quickshell.execDetached([
-      "omarchy", "launch", "terminal", "--", "bash", "-lc",
-      tool.cmd.join(" ") + "; echo; read -r -p 'Press Enter to close…'"
+      "omarchy", "launch", "terminal", "bash", "-lc",
+      tool.cmd.join(" ") + "; echo; read -r -p 'Press Enter to close…' _"
     ])
   }
 
