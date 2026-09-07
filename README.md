@@ -32,16 +32,22 @@ Ensure `~/.cargo/bin` is on your `PATH`. Optional short alias:
 ln -sf "$(which omakeeper)" ~/.local/bin/ok
 ```
 
-## Install plugin (local)
+## Install plugin
 
-Omarchy rejects symlinked plugin folders; copy or use `omarchy plugin add` with a git URL once published.
+From GitHub (recommended):
 
 ```bash
+# Clone the repo first, then point plugin add at the plugin/ subdirectory
+# after packaging — or copy plugin/ into the Omarchy plugins dir:
+
+git clone https://github.com/falser101/omakeeper.git
 PLUGIN="$HOME/.config/omarchy/plugins/io.github.falser101.omakeeper"
 mkdir -p "$PLUGIN"
-cp -a plugin/. "$PLUGIN/"
+cp -a omakeeper/plugin/. "$PLUGIN/"
 omarchy plugin enable io.github.falser101.omakeeper
 ```
+
+> Note: `omarchy plugin add` expects the **plugin root** (with `manifest.json`) to be the repo root. This monorepo keeps the plugin under `plugin/`, so use the copy steps above until a dedicated plugin repo or release layout is published.
 
 Summon:
 
