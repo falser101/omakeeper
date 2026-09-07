@@ -37,25 +37,25 @@ ln -sf "$(which omakeeper)" ~/.local/bin/ok
 Omarchy rejects symlinked plugin folders; copy or use `omarchy plugin add` with a git URL once published.
 
 ```bash
-PLUGIN="$HOME/.config/omarchy/plugins/io.github.falser.omakeeper"
+PLUGIN="$HOME/.config/omarchy/plugins/io.github.falser101.omakeeper"
 mkdir -p "$PLUGIN"
 cp -a plugin/. "$PLUGIN/"
-omarchy plugin enable io.github.falser.omakeeper
+omarchy plugin enable io.github.falser101.omakeeper
 ```
 
 Summon:
 
 ```bash
-omarchy-shell shell summon io.github.falser.omakeeper '{}'
+omarchy-shell shell summon io.github.falser101.omakeeper '{}'
 # or toggle
-omarchy-shell shell toggle io.github.falser.omakeeper
+omarchy-shell shell toggle io.github.falser101.omakeeper
 ```
 
 Suggested Hyprland binding (user config):
 
 ```lua
 o.bind({ "SUPER", "SHIFT" }, "O", function()
-  os.execute("omarchy-shell shell toggle io.github.falser.omakeeper &")
+  os.execute("omarchy-shell shell toggle io.github.falser101.omakeeper &")
 end)
 ```
 

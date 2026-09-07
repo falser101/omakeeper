@@ -5,7 +5,7 @@ edition = "2021"
 description = "System maintenance toolkit for Omarchy Linux"
 license = "MIT"
 authors = ["falser"]
-repository = "https://github.com/falser/omakeeper"
+repository = "https://github.com/falser101/omakeeper"
 readme = "../README.md"
 
 [[bin]]
