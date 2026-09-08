@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "App.js" as App
+import "I18n.js" as I18n
 
 Item {
   id: root
@@ -15,12 +16,28 @@ Item {
   property bool closingFromHost: false
   property int tab: 0
 
-  property color foreground: Color.menu.text
-  property color border: Color.menu.border
+  property string langPref: "system"
+  property string appearancePref: "system"
+  readonly property string uiLang: I18n.resolveLang(root.langPref)
+  readonly property bool followAppearance: root.appearancePref === "system"
+  readonly property bool lightUi: {
+    if (root.appearancePref === "light") return true
+    if (root.appearancePref === "dark") return false
+    var c = Color.background
+    return (c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722) > 0.5
+  }
+  property color foreground: root.followAppearance ? Color.menu.text : (root.lightUi ? "#1a1918" : "#e6e4df")
+  property color border: root.followAppearance ? Color.menu.border : (root.lightUi ? Qt.rgba(0, 0, 0, 0.18) : Qt.rgba(1, 1, 1, 0.18))
   property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
   property color scrim: Color.menu.scrim
+  property color pageBg: root.followAppearance ? Color.menu.background : (root.lightUi ? "#f7f4ea" : "#12141a")
+  property color selectedBg: root.followAppearance ? Color.menu.selectedBackground : (root.lightUi ? Qt.rgba(0, 0, 0, 0.10) : Qt.rgba(1, 1, 1, 0.14))
+  property color selectedFg: root.followAppearance ? Color.menu.selectedText : (root.lightUi ? "#1a1918" : "#f4f1e8")
+  property color accent: root.followAppearance ? Color.accent : (root.lightUi ? "#205ea6" : "#9ab8d4")
+  property color urgent: root.followAppearance ? Color.urgent : (root.lightUi ? "#c23b32" : "#d07070")
   property string fontFamily: Style.font.menuFamily
   readonly property int cornerRadius: Style.cornerRadius
+  readonly property string settingsPath: (Quickshell.env("HOME") || "") + "/.config/omakeeper/settings.json"
 
   property var cleanItems: []
   property var cleanSelected: ({})
@@ -50,17 +67,17 @@ Item {
   property string confirmKind: ""
   property string confirmMessage: ""
 
-  readonly property var tabs: [
-    { id: "clean", label: "清理" },
-    { id: "software", label: "软件" },
-    { id: "optimize", label: "优化" },
-    { id: "analyze", label: "分析" },
-    { id: "status", label: "状态" }
-  ]
-  readonly property var tabTint: ["#07101f", "#1c1210", "#16140c", "#1a120e", "#14120c"]
-  readonly property color panelColor: Qt.tint(Color.menu.background, Qt.rgba(
-    0.12, 0.1, 0.08, 0.55
-  ))
+  readonly property var tabs: {
+    var _ = root.uiLang
+    return [
+      { id: "clean", label: I18n.t("tab.clean", null, root.uiLang) },
+      { id: "software", label: I18n.t("tab.software", null, root.uiLang) },
+      { id: "optimize", label: I18n.t("tab.optimize", null, root.uiLang) },
+      { id: "analyze", label: I18n.t("tab.analyze", null, root.uiLang) },
+      { id: "status", label: I18n.t("tab.status", null, root.uiLang) },
+      { id: "settings", label: I18n.t("tab.settings", null, root.uiLang) }
+    ]
+  }
 
   readonly property var appLibrary: shell && shell.appLibrary ? shell.appLibrary : null
   property var iconFiles: ({})
@@ -103,19 +120,45 @@ Item {
     else root.open("{}")
   }
 
+  function tr(key, vars) { return I18n.t(key, vars, root.uiLang) }
+
+  function applySettings(data) {
+    if (!data) return
+    if (data.language === "zh" || data.language === "en" || data.language === "system")
+      root.langPref = data.language
+    if (data.appearance === "light" || data.appearance === "dark" || data.appearance === "system")
+      root.appearancePref = data.appearance
+  }
+
+  function saveSettings() {
+    Util.execArgv(["mkdir", "-p", (Quickshell.env("HOME") || "") + "/.config/omakeeper"])
+    var payload = JSON.stringify({ language: root.langPref, appearance: root.appearancePref }, null, 2) + "\n"
+    try { settingsFile.setText(payload) } catch (e) {}
+  }
+
+  function setLangPref(value) {
+    root.langPref = value
+    root.saveSettings()
+  }
+
+  function setAppearancePref(value) {
+    root.appearancePref = value
+    root.saveSettings()
+  }
+
   function setTab(i) {
     root.tab = i
     if (i === 1 && !root.packages.length) cli.scanUninstall()
     if (i === 2 && !root.optimizeTasks.length) cli.scanOptimize()
     if (i === 3 && !(root.analyzeReport && root.analyzeReport.entries && root.analyzeReport.entries.length)) {
-      root.analyzeCrumbs = [{ name: "概览", path: "" }]
+      root.analyzeCrumbs = [{ name: root.tr("analyze.overview"), path: "" }]
       cli.scanAnalyze("")
     }
     if (i === 4) cli.scanStatus()
   }
 
   function crumbName(path) {
-    if (!path) return "概览"
+    if (!path) return root.tr("analyze.overview")
     var parts = String(path).split("/").filter(function(s) { return s.length > 0 })
     return parts.length ? parts[parts.length - 1] : "/"
   }
@@ -124,7 +167,7 @@ Item {
     path = path || ""
     var crumbs = root.analyzeCrumbs.slice()
     if (!path) {
-      root.analyzeCrumbs = [{ name: "概览", path: "" }]
+      root.analyzeCrumbs = [{ name: root.tr("analyze.overview"), path: "" }]
       cli.scanAnalyze("")
       return
     }
@@ -302,7 +345,7 @@ Item {
               lines.push(data.tasks[j].label)
           }
         } else {
-          lines.push("优化完成")
+          lines.push(root.tr("opt.done"))
         }
         root.optimizeLog = lines
         cli.scanOptimize()
@@ -344,6 +387,14 @@ Item {
   }
 
   FileView {
+    id: settingsFile
+    path: root.settingsPath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.applySettings(App.parseJson(text()))
+  }
+
+  FileView {
     id: iconFileView
     path: root.iconCachePath
     watchChanges: true
@@ -361,7 +412,7 @@ Item {
     id: win
     title: "Omakeeper"
     visible: false
-    color: Qt.darker(root.tabTint[root.tab] || Color.menu.background, 1.0)
+    color: root.pageBg
     implicitWidth: 1280
     implicitHeight: 820
     minimumSize: Qt.size(900, 600)
@@ -393,12 +444,12 @@ Item {
             root.dismiss()
             event.accepted = true
           } else if (event.key === Qt.Key_Left) {
-            root.setTab((root.tab + 4) % 5)
+            root.setTab((root.tab + 5) % 6)
             event.accepted = true
           } else if (event.key === Qt.Key_Right) {
-            root.setTab((root.tab + 1) % 5)
+            root.setTab((root.tab + 1) % 6)
             event.accepted = true
-          } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_5) {
+          } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_6) {
             root.setTab(event.key - Qt.Key_1)
             event.accepted = true
           }
@@ -417,52 +468,32 @@ Item {
           width: parent.width
           height: Style.space(40)
 
-          Rectangle {
+          Row {
+            id: pillRow
             anchors.horizontalCenter: parent.horizontalCenter
-            height: Style.space(36)
-            width: pillRow.implicitWidth + Style.space(12)
-            radius: height / 2
-            color: Qt.rgba(1, 1, 1, 0.07)
-
-            Row {
-              id: pillRow
-              anchors.centerIn: parent
-              spacing: 2
-              Rectangle {
-                width: Style.space(28)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(4)
+            Repeater {
+              model: root.tabs
+              delegate: Rectangle {
+                required property var modelData
+                required property int index
+                width: tabLabel.implicitWidth + Style.space(22)
                 height: Style.space(28)
-                radius: width / 2
-                color: Qt.rgba(1, 1, 1, 0.08)
-                anchors.verticalCenter: parent.verticalCenter
+                radius: height / 2
+                color: root.tab === index ? root.selectedBg : "transparent"
                 Text {
+                  id: tabLabel
                   anchors.centerIn: parent
-                  text: "⌘"
-                  color: root.foreground
-                  font.pixelSize: Style.font.caption
+                  text: modelData.label
+                  color: root.tab === index ? root.selectedFg : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: root.tab === index
                 }
-              }
-              Repeater {
-                model: root.tabs
-                delegate: Rectangle {
-                  required property var modelData
-                  required property int index
-                  width: tabLabel.implicitWidth + Style.space(22)
-                  height: Style.space(28)
-                  radius: height / 2
-                  color: root.tab === index ? Qt.rgba(1, 1, 1, 0.88) : "transparent"
-                  Text {
-                    id: tabLabel
-                    anchors.centerIn: parent
-                    text: modelData.label
-                    color: root.tab === index ? "#16120e" : root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    font.bold: root.tab === index
-                  }
-                  MouseArea {
-                    anchors.fill: parent
-                    onClicked: root.setTab(index)
-                  }
+                MouseArea {
+                  anchors.fill: parent
+                  onClicked: root.setTab(index)
                 }
               }
             }
@@ -471,7 +502,7 @@ Item {
           Text {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: "Esc 关闭窗口"
+            text: root.tr("esc.close")
             color: root.foreground
             opacity: 0.35
             font.family: root.fontFamily
@@ -509,7 +540,10 @@ Item {
             onSetAllSelected: function(on) { root.setCleanSelection(on) }
             onRevealPath: function(path) { root.revealPath(path) }
             onScanRequested: cli.scanClean()
-            onApplyRequested: root.ask("clean", "删除 " + App.formatBytes(App.selectedBytes(root.cleanItems, root.cleanSelected)) + " 缓存？")
+            uiLang: root.uiLang
+            accent: root.accent
+            urgent: root.urgent
+            onApplyRequested: root.ask("clean", root.tr("clean.ask", { bytes: App.formatBytes(App.selectedBytes(root.cleanItems, root.cleanSelected)) }))
             onResetRequested: {
               root.cleanPhase = "idle"
               root.cleanProgress = []
@@ -536,10 +570,14 @@ Item {
             onTogglePkg: function(name) { root.togglePkg(name) }
             onExpandPkg: function(name) { root.expandPkg(name) }
             onQueryChangedByUser: function(v) { root.pkgQuery = v; root.dataRev += 1 }
+            uiLang: root.uiLang
+            selectedBg: root.selectedBg
+            accent: root.accent
+            urgent: root.urgent
             onApplyRequested: {
               var n = 0
               for (var k in root.pkgSelected) if (root.pkgSelected[k]) n++
-              root.ask("uninstall", "卸载 " + n + " 个软件及其残留？需要管理员权限。")
+              root.ask("uninstall", root.tr("soft.ask", { n: n }))
             }
           }
 
@@ -554,9 +592,13 @@ Item {
             applying: cli.busy && cli.kind === "optimize-apply"
             doneCount: root.optimizeDone
             foreground: root.foreground
+            uiLang: root.uiLang
+            accent: root.accent
+            urgent: root.urgent
+            pageBg: root.pageBg
             onToggleId: function(id) { root.toggleTask(id) }
             onScanRequested: cli.scanOptimize()
-            onApplyRequested: root.ask("optimize", "执行选中的系统维护任务？")
+            onApplyRequested: root.ask("optimize", root.tr("opt.ask"))
           }
 
           AnalyzeView {
@@ -567,9 +609,13 @@ Item {
             revision: root.dataRev
             scanning: cli.busy && cli.kind === "analyze"
             foreground: root.foreground
+            uiLang: root.uiLang
+            accent: root.accent
+            urgent: root.urgent
+            pageBg: root.pageBg
             onOpenPath: function(path) { root.navigateAnalyze(path) }
             onTrashPath: function(path) {
-              root.ask("trash:" + path, "将此项移到回收站？\n" + path)
+              root.ask("trash:" + path, root.tr("analyze.ask", { path: path }))
             }
           }
 
@@ -581,6 +627,24 @@ Item {
             foreground: root.foreground
             appLibrary: root.appLibrary
             desktopIndex: root.desktopIndex
+            uiLang: root.uiLang
+            accent: root.accent
+            urgent: root.urgent
+          }
+
+          SettingsView {
+            anchors.fill: parent
+            visible: root.tab === 5
+            uiLang: root.uiLang
+            langPref: root.langPref
+            appearancePref: root.appearancePref
+            foreground: root.foreground
+            selectedBg: root.selectedBg
+            selectedFg: root.selectedFg
+            accent: root.accent
+            urgent: root.urgent
+            onLangPrefChosen: function(v) { root.setLangPref(v) }
+            onAppearancePrefChosen: function(v) { root.setAppearancePref(v) }
           }
         }
       }
@@ -589,9 +653,9 @@ Item {
         id: confirm
         anchors.fill: parent
         message: root.confirmMessage
-        confirmText: "确认"
-        cancelText: "取消"
-        background: Color.menu.background
+        confirmText: root.tr("confirm")
+        cancelText: root.tr("cancel")
+        background: root.pageBg
         foreground: root.foreground
         onCanceled: confirm.opened = false
         onConfirmed: root.doConfirm()
@@ -603,7 +667,7 @@ Item {
         anchors.bottom: parent.bottom
         anchors.margins: Style.spacing.md
         text: cli.lastError
-        color: Color.urgent
+        color: root.urgent
         font.pixelSize: Style.font.caption
         width: parent.width * 0.6
         wrapMode: Text.WordWrap

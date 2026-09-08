@@ -1,13 +1,18 @@
 import QtQuick
 import qs.Commons
 import "App.js" as App
+import "I18n.js" as I18n
 
 Item {
   id: root
   property var snap: ({})
   property int revision: 0
   property color foreground: Color.menu.text
+  property color accent: Color.accent
+  property color urgent: Color.urgent
   property string fontFamily: Style.font.menuFamily
+  property string uiLang: "en"
+  function tr(key, vars) { return I18n.t(key, vars, root.uiLang) }
   property var appLibrary: null
   property var desktopIndex: ({})
   clip: true
@@ -55,25 +60,30 @@ Item {
       Repeater {
         model: [
           {
-            title: "健康度",
+            title: tr("status.health"),
             value: String(snap.health_score == null ? "—" : snap.health_score),
-            detail: App.healthLabel(snap.health_score) + "  ·  " + (snap.host || "") + "  ·  " + (snap.uptime || ""),
+            detail: tr(App.healthKey(snap.health_score)) + "  ·  " + (snap.host || "") + "  ·  " + (snap.uptime || ""),
             art: "sun"
           },
           {
-            title: "CPU",
+            title: tr("status.cpu"),
             value: (cpu.usage == null ? "—" : Math.round(cpu.usage) + "%"),
-            detail: "负载 " + ((cpu.load && cpu.load[0]) ? cpu.load[0].toFixed(2) : "—") + " / " + (cpu.logical_cpu || "?") + " 核"
+            detail: tr("status.load", {
+              load: (cpu.load && cpu.load[0]) ? cpu.load[0].toFixed(2) : "—",
+              n: cpu.logical_cpu || "?"
+            })
           },
           {
-            title: "内存",
+            title: tr("status.mem"),
             value: (mem.used_percent == null ? "—" : Math.round(mem.used_percent) + "%"),
             detail: App.formatBytes(mem.used) + " / " + App.formatBytes(mem.total)
           },
           {
-            title: "磁盘",
+            title: tr("status.disk"),
             value: disk.available ? App.formatBytes(disk.available) : "—",
-            detail: (disk.mount || "/") + "  已用 " + (disk.used_percent == null ? "—" : Math.round(disk.used_percent) + "%")
+            detail: (disk.mount || "/") + "  " + tr("status.used", {
+              pct: disk.used_percent == null ? "—" : Math.round(disk.used_percent) + "%"
+            })
           }
         ]
         delegate: Rectangle {
@@ -81,7 +91,7 @@ Item {
           width: root.statCellW
           height: Style.space(120)
           radius: Style.cornerRadius
-          color: Qt.rgba(1, 1, 1, 0.045)
+          color: Util.alpha(root.foreground, 0.06)
 
           Loader {
             active: modelData.art === "sun"
@@ -95,6 +105,9 @@ Item {
               animal: "chameleon"
               mood: Number(root.snap.health_score || 100) < 70 ? "busy" : "idle"
               showCaption: false
+              uiLang: root.uiLang
+              accent: root.accent
+              urgent: root.urgent
             }
           }
 
@@ -140,11 +153,11 @@ Item {
         width: root.bandCellW
         height: Style.space(88)
         radius: Style.cornerRadius
-        color: Qt.rgba(1, 1, 1, 0.045)
+        color: Util.alpha(root.foreground, 0.06)
         Column {
           anchors.fill: parent
           anchors.margins: Style.spacing.md
-          Text { text: "网络"; color: root.foreground; opacity: 0.55; font.pixelSize: Style.font.caption }
+          Text { text: tr("status.network"); color: root.foreground; opacity: 0.55; font.pixelSize: Style.font.caption }
           Text {
             text: "↓ " + App.formatBytes(net.down_bps || 0) + "/s    ↑ " + App.formatBytes(net.up_bps || 0) + "/s"
             color: root.foreground
@@ -152,7 +165,7 @@ Item {
             font.pixelSize: Style.font.subtitle
           }
           Text {
-            text: "僵尸进程 " + (snap.zombie_count || 0)
+            text: tr("status.zombies", { n: snap.zombie_count || 0 })
             color: root.foreground
             opacity: 0.5
             font.pixelSize: Style.font.caption
@@ -164,11 +177,11 @@ Item {
         width: root.bandCellW
         height: Style.space(88)
         radius: Style.cornerRadius
-        color: Qt.rgba(1, 1, 1, 0.045)
+        color: Util.alpha(root.foreground, 0.06)
         Column {
           anchors.fill: parent
           anchors.margins: Style.spacing.md
-          Text { text: "CPU 柱状"; color: root.foreground; opacity: 0.55; font.pixelSize: Style.font.caption }
+          Text { text: tr("status.cpuBars"); color: root.foreground; opacity: 0.55; font.pixelSize: Style.font.caption }
           Text {
             text: App.bar((cpu.usage || 0) / 100, 28)
             color: root.foreground
@@ -187,7 +200,7 @@ Item {
     anchors.topMargin: root.gap
     anchors.bottom: parent.bottom
     radius: Style.cornerRadius
-    color: Qt.rgba(1, 1, 1, 0.03)
+    color: Util.alpha(root.foreground, 0.04)
 
     ListView {
       anchors.fill: parent
@@ -198,10 +211,10 @@ Item {
         width: parent.width
         height: Style.space(24)
         Item { width: Style.space(26); height: 1 }
-        Text { width: parent.width * 0.40; text: "进程"; color: root.foreground; opacity: 0.45; font.pixelSize: Style.font.caption }
-        Text { width: parent.width * 0.15; text: "PID"; color: root.foreground; opacity: 0.45; font.pixelSize: Style.font.caption }
-        Text { width: parent.width * 0.2; text: "CPU"; color: root.foreground; opacity: 0.45; font.pixelSize: Style.font.caption }
-        Text { width: parent.width * 0.2; text: "内存"; color: root.foreground; opacity: 0.45; font.pixelSize: Style.font.caption }
+        Text { width: parent.width * 0.40; text: tr("status.proc"); color: root.foreground; opacity: 0.45; font.pixelSize: Style.font.caption }
+        Text { width: parent.width * 0.15; text: tr("status.pid"); color: root.foreground; opacity: 0.45; font.pixelSize: Style.font.caption }
+        Text { width: parent.width * 0.2; text: tr("status.cpu"); color: root.foreground; opacity: 0.45; font.pixelSize: Style.font.caption }
+        Text { width: parent.width * 0.2; text: tr("status.mem"); color: root.foreground; opacity: 0.45; font.pixelSize: Style.font.caption }
       }
       delegate: Row {
         required property var modelData
@@ -233,7 +246,7 @@ Item {
         Text {
           width: parent.width * 0.2
           text: modelData.cpu == null ? "—" : Number(modelData.cpu).toFixed(1) + "%"
-          color: Number(modelData.cpu || 0) > 50 ? "#d07070" : root.foreground
+          color: Number(modelData.cpu || 0) > 50 ? root.urgent : root.foreground
         }
         Text { width: parent.width * 0.2; text: App.formatBytes(modelData.rss); color: root.foreground; opacity: 0.7 }
       }

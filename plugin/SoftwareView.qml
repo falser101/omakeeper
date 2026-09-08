@@ -2,6 +2,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "App.js" as App
+import "I18n.js" as I18n
 
 Item {
   id: root
@@ -15,7 +16,12 @@ Item {
   property bool scanning: false
   property bool applying: false
   property color foreground: Color.menu.text
+  property color selectedBg: Color.menu.selectedBackground
+  property color accent: Color.accent
+  property color urgent: Color.urgent
   property string fontFamily: Style.font.menuFamily
+  property string uiLang: "en"
+  function tr(key, vars) { return I18n.t(key, vars, root.uiLang) }
   property var appLibrary: null
   property var desktopIndex: ({})
 
@@ -57,16 +63,16 @@ Item {
 
     Repeater {
       model: [
-        { id: "remove", label: "卸载" },
-        { id: "updates", label: "更新" },
-        { id: "autostart", label: "启动项" }
+        { id: "remove", label: tr("soft.remove") },
+        { id: "updates", label: tr("soft.updates") },
+        { id: "autostart", label: tr("soft.autostart") }
       ]
       delegate: Rectangle {
         required property var modelData
         width: label.implicitWidth + Style.space(24)
         height: Style.space(28)
         radius: height / 2
-        color: root.subtab === modelData.id ? Qt.rgba(1, 1, 1, 0.14) : Qt.rgba(1, 1, 1, 0.04)
+        color: root.subtab === modelData.id ? root.selectedBg : Util.alpha(root.foreground, 0.05)
         Text {
           id: label
           anchors.centerIn: parent
@@ -88,7 +94,7 @@ Item {
     id: search
     anchors.right: parent.right
     width: Style.space(220)
-    placeholderText: "搜索软件"
+    placeholderText: tr("soft.search")
     text: root.query
     onTextEdited: root.queryChangedByUser(text)
   }
@@ -103,6 +109,9 @@ Item {
     mood: (root.scanning || root.applying) ? "busy" : "idle"
     creatureSize: Style.space(140)
     showCaption: false
+    uiLang: root.uiLang
+    accent: root.accent
+    urgent: root.urgent
   }
 
   ListView {
@@ -124,7 +133,7 @@ Item {
       width: list.width
       height: body.implicitHeight + Style.space(16)
       radius: Style.cornerRadius
-      color: mouse.containsMouse || root.selected[modelData.name] ? Qt.rgba(1, 1, 1, 0.05) : "transparent"
+      color: mouse.containsMouse || root.selected[modelData.name] ? Util.alpha(root.foreground, 0.07) : "transparent"
 
       MouseArea {
         id: mouse
@@ -220,7 +229,7 @@ Item {
           }
           Text {
             visible: (root.leftovers[modelData.name] || []).length === 0
-            text: "  无额外残留，或仍在扫描…"
+            text: tr("soft.noneLeft")
             color: root.foreground
             opacity: 0.4
             font.family: root.fontFamily
@@ -234,7 +243,7 @@ Item {
   Text {
     visible: root.subtab !== "remove"
     anchors.centerIn: parent
-    text: root.subtab === "updates" ? "软件更新仍走 pacman / omarchy update" : "启动项管理将在后续版本加入"
+    text: root.subtab === "updates" ? tr("soft.updatesSoon") : tr("soft.autostartSoon")
     color: root.foreground
     opacity: 0.5
     font.family: root.fontFamily
@@ -271,7 +280,7 @@ Item {
       }
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        text: root.selectedNames.length + " 个软件  ·  " + App.formatBytes(root.selectedBytes)
+        text: tr("soft.selected", { n: root.selectedNames.length, bytes: App.formatBytes(root.selectedBytes) })
         color: root.foreground
         font.family: root.fontFamily
       }
@@ -280,7 +289,7 @@ Item {
     Button {
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      text: root.applying ? "移除中…" : ("移除 " + root.selectedNames.length + " 项")
+      text: root.applying ? tr("soft.removing") : tr("soft.removeN", { n: root.selectedNames.length })
       enabled: !root.applying && root.selectedNames.length > 0
       selected: true
       onClicked: root.applyRequested()

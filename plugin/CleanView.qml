@@ -4,6 +4,7 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 import "App.js" as App
+import "I18n.js" as I18n
 
 Item {
   id: root
@@ -15,7 +16,11 @@ Item {
   property bool applying: false
   property var totals: ({ cleaned: 0, uninstalled: 0, optimized: 0 })
   property color foreground: Color.menu.text
+  property color accent: Color.accent
+  property color urgent: Color.urgent
   property string fontFamily: Style.font.menuFamily
+  property string uiLang: "en"
+  function tr(key, vars) { return I18n.t(key, vars, root.uiLang) }
   property var appLibrary: null
   property var desktopIndex: ({})
   property real freedNow: 0
@@ -75,28 +80,31 @@ Item {
       ? Math.max(Style.space(24), (footer.y - implicitHeight) / 2)
       : Style.space(12)
     animal: "cat"
-    mood: (root.scanning || root.applying) ? "busy" : "idle"
+    mood: root.scanning ? "busy" : "idle"
     creatureSize: root.idle
       ? Math.min(Style.space(300), parent.width * 0.32)
       : Style.space(120)
     headline: {
-      if (root.scanning) return "正在扫描"
-      if (root.applying) return "正在清理"
+      if (root.scanning) return tr("clean.scanning")
+      if (root.applying) return tr("clean.applying")
       if (root.phase === "done" && root.idle) return App.formatBytes(root.freedNow)
       if (root.items.length && root.count) return App.formatBytes(root.bytes)
       if (root.items.length) return App.formatBytes(App.allBytes(root.items))
-      return "准备清理"
+      return tr("clean.ready")
     }
     subline: {
-      if (root.scanning) return "查找可安全删除的缓存与垃圾"
-      if (root.applying) return "正在删除已选项"
-      if (root.phase === "done" && root.idle) return "已清理 · 累计 " + App.formatBytes(root.totals.cleaned)
+      if (root.scanning) return tr("clean.scanningHint")
+      if (root.applying) return tr("clean.applyingHint")
+      if (root.phase === "done" && root.idle) return tr("clean.doneHint", { bytes: App.formatBytes(root.totals.cleaned) })
       if (root.items.length)
-        return root.count + " / " + root.items.length + " 项已选 · 点分类展开明细"
-      return "点下方按钮开始扫描缓存"
+        return tr("clean.reviewHint", { count: root.count, total: root.items.length })
+      return tr("clean.scanHint")
     }
     foreground: root.foreground
     fontFamily: root.fontFamily
+    uiLang: root.uiLang
+    accent: root.accent
+    urgent: root.urgent
   }
 
   ListView {
@@ -136,8 +144,8 @@ Item {
       }
       radius: modelData.kind === "header" ? Math.max(Style.cornerRadius, Style.space(8)) : Style.cornerRadius
       color: modelData.kind === "header"
-        ? (mouse.containsMouse ? Qt.rgba(1, 1, 1, 0.07) : Qt.rgba(1, 1, 1, 0.04))
-        : (mouse.containsMouse ? Qt.rgba(1, 1, 1, 0.05) : "transparent")
+        ? (mouse.containsMouse ? Util.alpha(root.foreground, 0.10) : Util.alpha(root.foreground, 0.05))
+        : (mouse.containsMouse ? Util.alpha(root.foreground, 0.07) : "transparent")
       opacity: modelData.skip_reason ? 0.45 : 1
 
       MouseArea {
@@ -190,7 +198,8 @@ Item {
           spacing: 2
           Text {
             width: parent.width
-            text: catMeta.title + "  " + catCheck.picked + "/" + catCheck.selectable + " 已选"
+            text: tr("cat." + catMeta.key + ".title") + "  "
+              + tr("cat.selected", { picked: catCheck.picked, total: catCheck.selectable })
             elide: Text.ElideRight
             color: root.foreground
             font.family: root.fontFamily
@@ -199,7 +208,7 @@ Item {
           }
           Text {
             width: parent.width
-            text: catMeta.hint
+            text: tr("cat." + catMeta.key + ".hint")
             elide: Text.ElideRight
             color: root.foreground
             opacity: 0.45
@@ -308,7 +317,7 @@ Item {
           anchors.right: itemSize.left
           anchors.rightMargin: Style.spacing.md
           anchors.verticalCenter: parent.verticalCenter
-          text: modelData.count + " 项"
+          text: tr("clean.items", { n: modelData.count })
           color: root.foreground
           opacity: 0.45
           font.family: root.fontFamily
@@ -333,9 +342,9 @@ Item {
           width: Style.space(26)
           height: Style.space(26)
           radius: width / 2
-          color: revealMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
+          color: revealMouse.containsMouse ? Util.alpha(root.foreground, 0.10) : "transparent"
           border.width: 1
-          border.color: Qt.rgba(1, 1, 1, 0.16)
+          border.color: Util.alpha(root.foreground, 0.22)
           Image {
             anchors.fill: parent
             anchors.margins: Style.space(5)
@@ -373,10 +382,10 @@ Item {
       headline: App.formatBytes(root.freedNow)
       subline: {
         var cur = root.progressCurrent || ({})
-        var name = cur.label || "正在清理"
+        var name = cur.label || tr("clean.applying")
         var n = Math.max(1, root.progressIndex)
         var t = Math.max(root.progressTotal, 1)
-        return name + "  ·  " + n + "/" + t
+        return tr("clean.sprint", { name: name, n: n, t: t })
       }
       foreground: root.foreground
       fontFamily: root.fontFamily
@@ -412,7 +421,7 @@ Item {
             width: Style.space(18)
             anchors.verticalCenter: parent.verticalCenter
             text: modelData.ok === false ? "✕" : "✓"
-            color: modelData.ok === false ? "#d07070" : root.foreground
+            color: modelData.ok === false ? root.urgent : root.foreground
             opacity: 0.8
           }
           Text {
@@ -448,11 +457,14 @@ Item {
       anchors.verticalCenterOffset: -Style.space(24)
       width: parent.width
       animal: "cat"
-      mood: "idle"
+      mood: "celebrate"
       creatureSize: Math.min(Style.space(300), parent.width * 0.36)
       headline: App.formatBytes(root.freedNow)
-      subline: "≈ " + App.fourKMinutes(root.freedNow) + " 分钟 4K  ·  "
-        + root.skipped + " 已跳过  ·  累计 " + App.formatBytes(root.totals.cleaned)
+      subline: tr("clean.doneSub", {
+        mins: App.fourKMinutes(root.freedNow),
+        skipped: root.skipped,
+        bytes: App.formatBytes(root.totals.cleaned)
+      })
       foreground: root.foreground
       fontFamily: root.fontFamily
     }
@@ -461,7 +473,7 @@ Item {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.top: doneHero.bottom
       anchors.topMargin: Style.spacing.md
-      text: "回到清理"
+      text: tr("clean.back")
       selected: true
       onClicked: root.resetRequested()
     }
@@ -479,7 +491,7 @@ Item {
       visible: root.idle || root.scanning
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.verticalCenter: parent.verticalCenter
-      text: root.scanning ? "扫描中…" : "清理"
+      text: root.scanning ? tr("clean.scanningBtn") : tr("clean.scan")
       enabled: !root.scanning && !root.applying
       selected: true
       onClicked: root.scanRequested()
@@ -493,14 +505,14 @@ Item {
 
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        text: root.count + " 项已选"
+        text: tr("clean.selectedCount", { n: root.count })
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
       }
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        text: "全选"
+        text: tr("clean.selectAll")
         color: root.foreground
         opacity: linkAll.containsMouse ? 1 : 0.55
         font.family: root.fontFamily
@@ -516,7 +528,7 @@ Item {
       }
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        text: "全不选"
+        text: tr("clean.selectNone")
         color: root.foreground
         opacity: linkNone.containsMouse ? 1 : 0.55
         font.family: root.fontFamily
@@ -532,7 +544,7 @@ Item {
       }
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        text: "重新扫描"
+        text: tr("clean.rescan")
         color: root.foreground
         opacity: linkScan.containsMouse ? 1 : 0.45
         font.family: root.fontFamily
@@ -552,7 +564,7 @@ Item {
       visible: root.items.length > 0 && !root.scanning
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      text: root.applying ? "清理中…" : ("清理 · " + App.formatBytes(root.bytes))
+      text: root.applying ? tr("clean.applyingBtn") : tr("clean.apply", { bytes: App.formatBytes(root.bytes) })
       enabled: !root.applying && root.count > 0
       selected: true
       onClicked: root.applyRequested()

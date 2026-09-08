@@ -47,9 +47,9 @@ Item {
   Rectangle {
     anchors.fill: parent
     radius: Math.max(4, root.width * 0.22)
-    color: Qt.rgba(1, 1, 1, 0.16)
+    color: Util.alpha(root.foreground, 0.16)
     border.width: 1
-    border.color: Qt.rgba(1, 1, 1, 0.12)
+    border.color: Util.alpha(root.foreground, 0.18)
     visible: img.status !== Image.Ready
     Text {
       anchors.centerIn: parent

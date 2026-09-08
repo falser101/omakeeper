@@ -172,12 +172,12 @@ function tileColor(index, name) {
   return palette[index % palette.length]
 }
 
-function healthLabel(score) {
+function healthKey(score) {
   score = Number(score || 0)
-  if (score >= 85) return "很好"
-  if (score >= 70) return "良好"
-  if (score >= 50) return "一般"
-  return "压力偏高"
+  if (score >= 85) return "health.great"
+  if (score >= 70) return "health.good"
+  if (score >= 50) return "health.ok"
+  return "health.high"
 }
 
 var ICON_SUFFIXES = ["-bin", "-git", "-debug", "-appimage", "-nightly", "-stable", "-git-bin", "-follow-system"]
@@ -286,43 +286,16 @@ function mergeIconMaps(iconFiles, appLibrary, desktopValues) {
 
 function cleanCategoryMeta(cat) {
   var key = String(cat || "other")
-  var all = {
-    user: {
-      title: "用户缓存",
-      hint: "回收站、缩略图和字体缓存",
-      asset: "cat-user.png"
-    },
-    browser: {
-      title: "浏览器",
-      hint: "浏览器缓存。Cookie 与登录保持不变",
-      asset: "cat-browser.png"
-    },
-    dev: {
-      title: "开发工具",
-      hint: "编译器和包管理器缓存，下次构建会变慢",
-      asset: "cat-dev.png"
-    },
-    packages: {
-      title: "软件包",
-      hint: "AUR 助手缓存",
-      asset: "cat-packages.png"
-    },
-    apps: {
-      title: "应用缓存",
-      hint: "应用临时文件，下次启动会重新生成",
-      asset: "cat-apps.png"
-    },
-    logs: {
-      title: "日志",
-      hint: "诊断日志。占用中的文件会跳过",
-      asset: "cat-logs.png"
-    }
+  var assets = {
+    user: "cat-user.png",
+    browser: "cat-browser.png",
+    dev: "cat-dev.png",
+    packages: "cat-packages.png",
+    apps: "cat-apps.png",
+    logs: "cat-logs.png"
   }
-  return all[key] || {
-    title: key,
-    hint: "其他可清理项",
-    asset: "cat-other.png"
-  }
+  if (!assets[key]) key = "other"
+  return { key: key, asset: assets[key] || "cat-other.png" }
 }
 
 function categoryCheck(items, selected, category) {

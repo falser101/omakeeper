@@ -135,31 +135,87 @@ def render(grid: Grid) -> Image.Image:
 
 
 def cat(frame: int) -> Grid:
+    """Side-view run cycle facing right — readable silhouette, 6-frame loop."""
     g = Grid()
-    # Sit-groom: ears stay planted; right paw lifts, licks, wipes, returns.
-    head_dy = [0, 1, 2, 3, 1, 0][frame]
-    head_dx = [0, 1, 1, 0, -1, 0][frame]
-    hx, hy = 15 + head_dx, 11 + head_dy
-    g.ellipse(hx, hy, 7.2, 6.0)
-    g.tri((hx - 8, hy - 1), (hx - 4, hy - 9), (hx - 1, hy - 2))
-    g.tri((hx + 8, hy - 1), (hx + 4, hy - 9), (hx + 1, hy - 2))
-    g.ellipse(15, 22, 8.6, 8.2)
-    g.rect(9, 28, 13, 31)
-    tip = [0, 1, 2, 1, -1, -2][frame]
-    g.thick(22, 20, 26, 16, 1.55)
-    g.thick(26, 16, 28, 10 + tip, 1.4)
-    g.thick(28, 10 + tip, 26, 5 + tip, 1.25)
-    paw = [(19, 29), (24, 18), (24, 12), (21, 12), (7, 12), (20, 26)][frame]
-    if frame in (0, 5):
-        g.rect(17, 28, 21, 31)
-    else:
-        g.thick(18, 20, paw[0], paw[1], 1.35)
-        g.disk(paw[0], paw[1], 2.45)
-    g.disk(hx - 3, hy - 0.5, 1.45, 0)
-    g.disk(hx + 3, hy - 0.5, 1.45, 0)
-    if frame not in (2, 3):
-        g.on(hx - 3, hy - 0.5)
-        g.on(hx + 3, hy - 0.5)
+    # Phases: 0 contact, 1 pass, 2 extend, 3 flight, 4 land, 5 gather
+    bob = [0, 1, -1, -3, -1, 1][frame]
+    stretch = [0.2, -0.4, 0.8, 1.4, 0.6, -0.2][frame]
+    bx, by = 15.0, 16.5 + bob
+
+    # Streaming tail (behind / left)
+    tip = [1, -1, -3, -4, -2, 0][frame]
+    g.thick(bx - 6.5, by + 0.5, bx - 10.5, by - 1 + tip * 0.35, 1.35)
+    g.thick(bx - 10.5, by - 1 + tip * 0.35, bx - 13.5, by - 5 + tip, 1.15)
+    g.disk(bx - 13.5, by - 5 + tip, 1.4)
+
+    # Body + neck
+    g.ellipse(bx, by, 6.6 + stretch * 0.45, 4.4 - abs(stretch) * 0.15)
+    g.ellipse(bx + 5.0 + stretch * 0.25, by - 0.8, 3.6, 3.2)
+
+    # Head + pointed ears
+    hx = bx + 8.6 + stretch * 0.3
+    hy = by - 3.6 + bob * 0.2
+    g.ellipse(hx, hy, 4.0, 3.6)
+    g.tri((hx - 0.5, hy - 2.2), (hx - 2.8, hy - 7.0), (hx + 1.2, hy - 2.8))
+    g.tri((hx + 1.2, hy - 2.0), (hx + 3.8, hy - 6.6), (hx + 3.0, hy - 1.2))
+    g.disk(hx + 1.2, hy - 0.3, 1.2, 0)
+    g.on(hx + 1.2, hy - 0.3)
+    g.on(hx + 3.2, hy + 0.5)
+
+    # Two primary legs (near) + thinner far pair for depth — keep gaps so silhouette reads
+    # foot: (hip_dx, foot_x, foot_y, thickness)
+    def leg(hip_dx, fx, fy, thick=1.05):
+        hipx, hipy = bx + hip_dx, by + 2.8
+        mx = hipx * 0.45 + fx * 0.55
+        my = hipy * 0.55 + fy * 0.45
+        g.thick(hipx, hipy, mx, my, thick)
+        g.thick(mx, my, fx, fy, thick * 0.92)
+        g.disk(fx, fy, 1.35 if thick > 0.9 else 1.05)
+
+    # Near rear / near front (thick), far rear / far front (thin, phase-shifted)
+    near_rear = [
+        (-3.0, bx - 6.0, 29),
+        (-2.6, bx - 1.5, 28),
+        (-2.2, bx + 2.5, 26),
+        (-2.0, bx + 5.0, 23),
+        (-2.5, bx + 0.5, 25),
+        (-2.8, bx - 4.0, 28),
+    ][frame]
+    near_front = [
+        (3.8, bx + 7.0, 28),
+        (3.4, bx + 9.5, 25),
+        (3.0, bx + 7.5, 23),
+        (2.8, bx + 3.0, 25),
+        (3.2, bx + 0.5, 28),
+        (3.6, bx + 4.0, 29),
+    ][frame]
+    far_rear = [
+        (-4.0, bx - 8.0, 28),
+        (-3.6, bx - 4.5, 29),
+        (-3.2, bx - 0.5, 28),
+        (-2.8, bx + 2.5, 24),
+        (-3.4, bx - 2.5, 26),
+        (-3.8, bx - 6.5, 27),
+    ][frame]
+    far_front = [
+        (4.6, bx + 9.0, 29),
+        (4.2, bx + 10.5, 27),
+        (3.8, bx + 8.5, 24),
+        (3.4, bx + 5.0, 23),
+        (3.8, bx + 2.0, 27),
+        (4.2, bx + 5.5, 29),
+    ][frame]
+
+    # Draw far legs first so near legs overlap cleanly
+    leg(*far_rear, 0.75)
+    leg(*far_front, 0.75)
+    leg(*near_rear, 1.15)
+    leg(*near_front, 1.15)
+
+    # Motion whiskers on extend / flight
+    if frame in (2, 3, 4):
+        g.on(hx + 4.2, hy)
+        g.on(hx + 4.8, hy + 1)
     return g
 
 
@@ -262,13 +318,17 @@ ANIMALS = {
     "chameleon": chameleon,
 }
 
+# Photo-real cat run cycle lives as hand-authored cat-0..7.png — do not clobber.
+SKIP_RENDER = {"cat"}
+
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
+    renderable = [(n, fn) for n, fn in ANIMALS.items() if n not in SKIP_RENDER]
     sheet_w = CANVAS * FRAMES
-    sheet_h = CANVAS * len(ANIMALS)
+    sheet_h = CANVAS * len(renderable)
     sheet = Image.new("RGBA", (sheet_w, sheet_h), (12, 16, 28, 255))
-    for ay, (name, fn) in enumerate(ANIMALS.items()):
+    for ay, (name, fn) in enumerate(renderable):
         for i in range(FRAMES):
             im = render(fn(i))
             path = OUT / f"{name}-{i}.png"
@@ -278,7 +338,7 @@ def main() -> None:
             sheet.paste(im, (i * CANVAS, ay * CANVAS), im)
     preview = OUT.parent / "scripts" / "mascot-sheet.png"
     sheet.save(preview, "PNG")
-    print(f"wrote {len(ANIMALS) * FRAMES} frames + sheet {preview}")
+    print(f"wrote {len(renderable) * FRAMES} frames + sheet {preview} (skipped {sorted(SKIP_RENDER)})")
 
 
 if __name__ == "__main__":

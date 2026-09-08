@@ -2,6 +2,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "App.js" as App
+import "I18n.js" as I18n
 
 Item {
   id: root
@@ -10,7 +11,12 @@ Item {
   property int revision: 0
   property bool scanning: false
   property color foreground: Color.menu.text
+  property color accent: Color.accent
+  property color urgent: Color.urgent
+  property color pageBg: Color.menu.background
   property string fontFamily: Style.font.menuFamily
+  property string uiLang: "en"
+  function tr(key, vars) { return I18n.t(key, vars, root.uiLang) }
 
   signal openPath(string path)
   signal trashPath(string path)
@@ -80,6 +86,9 @@ Item {
         mood: root.scanning ? "busy" : "idle"
         showCaption: false
         anchors.horizontalCenter: parent.horizontalCenter
+        uiLang: root.uiLang
+        accent: root.accent
+        urgent: root.urgent
       }
       Text {
         anchors.top: jup.bottom
@@ -104,7 +113,7 @@ Item {
           required property var modelData
           width: side.width
           height: Style.space(28)
-          color: smouse.containsMouse ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+          color: smouse.containsMouse ? Util.alpha(root.foreground, 0.08) : "transparent"
           radius: 6
           MouseArea {
             id: smouse
@@ -184,7 +193,7 @@ Item {
       Text {
         visible: root.scanning && root.tiles.length === 0
         anchors.centerIn: parent
-        text: "扫描磁盘…"
+        text: tr("analyze.scanning")
         color: root.foreground
         font.family: root.fontFamily
       }

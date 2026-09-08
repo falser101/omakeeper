@@ -2,6 +2,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "App.js" as App
+import "I18n.js" as I18n
 
 Item {
   id: root
@@ -13,7 +14,12 @@ Item {
   property bool applying: false
   property int doneCount: 0
   property color foreground: Color.menu.text
+  property color accent: Color.accent
+  property color urgent: Color.urgent
+  property color pageBg: Color.menu.background
   property string fontFamily: Style.font.menuFamily
+  property string uiLang: "en"
+  function tr(key, vars) { return I18n.t(key, vars, root.uiLang) }
 
   signal toggleId(string id)
   signal scanRequested()
@@ -40,12 +46,15 @@ Item {
     animal: "otter"
     mood: (root.applying || root.scanning) ? "busy" : "idle"
     creatureSize: Math.min(Style.space(280), parent.width * 0.3)
-    headline: root.applying ? "正在深度优化系统" : (root.scanning ? "检查维护任务" : "系统优化")
+    headline: root.applying ? tr("opt.applying") : (root.scanning ? tr("opt.scanning") : tr("opt.title"))
     subline: root.applying
-      ? ("已完成 " + root.doneCount + " / " + Math.max(root.readyCount, 1))
-      : (root.readyCount + " 项就绪 · 用户态维护，不碰内核")
+      ? tr("opt.progress", { n: root.doneCount, t: Math.max(root.readyCount, 1) })
+      : tr("opt.readyHint", { n: root.readyCount })
     foreground: root.foreground
     fontFamily: root.fontFamily
+    uiLang: root.uiLang
+    accent: root.accent
+    urgent: root.urgent
   }
 
   Rectangle {
@@ -55,7 +64,7 @@ Item {
     width: Math.min(parent.width * 0.55, Style.space(420))
     height: Math.min(Style.space(160), logCol.implicitHeight + Style.space(24))
     radius: Style.cornerRadius
-    color: Qt.rgba(0, 0, 0, 0.28)
+    color: Util.alpha(root.pageBg, 0.55)
 
     Column {
       id: logCol
@@ -91,7 +100,7 @@ Item {
       width: ListView.view ? ListView.view.width : 0
       height: Style.space(36)
       radius: Style.cornerRadius
-      color: mouse.containsMouse ? Qt.rgba(1, 1, 1, 0.05) : "transparent"
+      color: mouse.containsMouse ? Util.alpha(root.foreground, 0.07) : "transparent"
       opacity: modelData.status === "ready" ? 1 : 0.45
 
       MouseArea {
@@ -140,12 +149,12 @@ Item {
     anchors.bottom: parent.bottom
     spacing: Style.spacing.md
     Button {
-      text: "刷新"
+      text: tr("opt.refresh")
       enabled: !root.scanning && !root.applying
       onClicked: root.scanRequested()
     }
     Button {
-      text: root.applying ? "优化中…" : "开始优化"
+      text: root.applying ? tr("opt.running") : tr("opt.start")
       selected: true
       enabled: !root.applying && root.readyCount > 0
       onClicked: root.applyRequested()
