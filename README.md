@@ -1,21 +1,24 @@
 # Omakeeper
 
-System maintenance for [Omarchy](https://omarchy.org/) — clean caches, purge build artifacts, remove leftover installers, and (soon) uninstall, optimize, analyze, and monitor.
+System maintenance for [Omarchy](https://omarchy.org/) — clean caches, purge build artifacts, remove leftover installers, uninstall packages, run bounded maintenance, explore disk usage, and watch live system status.
 
 Inspired by the workflow of [Mole](https://github.com/tw93/Mole), rebuilt for Arch/Omarchy with a **Rust CLI** and an **Omarchy shell plugin**. Branding uses Omarchy menu styling and icon semantics, not solar-system planets.
 
-## Status (Phase 0–1)
+## Status
 
 | Command | Status |
 |---------|--------|
 | `omakeeper` (interactive menu) | ✅ |
-| `omakeeper clean` | ✅ dry-run + apply (user caches) |
-| `omakeeper purge` | ✅ scan + confirm |
-| `omakeeper installer` | ✅ Downloads / Desktop leftovers |
+| `omakeeper clean` | ✅ scan + TUI pick + apply (user caches, browsers, apps, logs, dev) |
+| `omakeeper purge` | ✅ scan + TUI pick + confirm |
+| `omakeeper installer` | ✅ Downloads / Desktop / Documents / Telegram leftovers |
+| `omakeeper analyze` | ✅ disk explorer (overview, drill-in, trash) |
+| `omakeeper status` | ✅ health dashboard (`--watch` for live) |
 | `omakeeper history` | ✅ |
 | `omakeeper whitelist` | ✅ |
-| uninstall / optimize / analyze / status | planned |
-| Omarchy overlay launcher | ✅ (opens CLI in terminal for now) |
+| `omakeeper uninstall` | ✅ pacman -Rns + leftover user dirs (denylist for core packages) |
+| `omakeeper optimize` | ✅ journal vacuum, font/icon/MIME caches, DNS flush, tmpfiles, flatpak repair |
+| Omarchy overlay | ✅ five-tab app (清理 / 软件 / 优化 / 分析 / 状态), no terminal hop |
 
 ## Install CLI
 
@@ -49,13 +52,15 @@ omarchy plugin enable io.github.falser101.omakeeper
 
 > Note: `omarchy plugin add` expects the **plugin root** (with `manifest.json`) to be the repo root. This monorepo keeps the plugin under `plugin/`, so use the copy steps above until a dedicated plugin repo or release layout is published.
 
-Summon:
+Summon the five-tab overlay (Clean / Software / Optimize / Analyze / Status):
 
 ```bash
 omarchy-shell shell summon io.github.falser101.omakeeper '{}'
 # or toggle
 omarchy-shell shell toggle io.github.falser101.omakeeper
 ```
+
+The overlay talks to the CLI over `--json` (and `--select-file` when applying). Uninstall uses `pkexec` for pacman when it is not attached to a TTY.
 
 Suggested Hyprland binding (user config):
 
@@ -70,19 +75,41 @@ end)
 ```bash
 omakeeper                     # interactive menu
 omakeeper clean --dry-run     # preview caches
-omakeeper clean               # delete after confirm
+omakeeper clean               # pick items, then delete after confirm
 omakeeper purge --dry-run
 omakeeper installer --dry-run
+omakeeper uninstall           # pick explicit packages (/ to search)
+omakeeper uninstall vlc --dry-run
+omakeeper optimize --dry-run  # preview maintenance tasks
+omakeeper optimize            # apply selected tasks
+omakeeper optimize --whitelist
+omakeeper analyze             # disk explorer
+omakeeper analyze ~/.cache
+omakeeper analyze --json ~
+omakeeper status              # one-shot dashboard
+omakeeper status --watch      # live refresh
+omakeeper status --json
 omakeeper history
 omakeeper whitelist add ~/.cache/something-to-keep
 omakeeper clean --dry-run --json
 ```
+
+In a TTY, `clean` / `purge` / `installer` / `uninstall` / `optimize` open a selector:
+
+- space toggle · `a` all · `n` none · `i` invert · `/` search · enter confirm · `q` quit
+
+Busy processes (Firefox, Chrome, cargo, …) are skipped so live caches are not deleted. Installer items start unselected. Purge unselects artifacts touched in the last 7 days.
+
+`analyze` moves selected items to the XDG trash (`~/.local/share/Trash`) after `d`, and refuses paths outside `$HOME`.
 
 ## Safety
 
 - Prefer `--dry-run` before deleting.
 - Whitelist paths with `omakeeper whitelist add <path>`.
 - Destructive actions ask for confirmation unless `--yes` is passed after review.
+- Model caches (huggingface, ollama, torch, …) are never offered by `clean`.
+- `uninstall` will not list kernel, Hyprland, sudo, pacman, omarchy settings, NVIDIA, or other core packages.
+- `optimize` stays user-level unless `sudo -v` has cached credentials (system journal vacuum).
 - Logs: `~/.local/share/omakeeper/operations.log`
 - Config: `~/.config/omakeeper/`
 

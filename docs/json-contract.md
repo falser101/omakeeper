@@ -1,4 +1,4 @@
-# Omakeeper JSON contract (draft)
+# Omakeeper JSON contract
 
 Machine-readable output for the Omarchy plugin and scripts. Prefer `--json` with `--dry-run` for scans.
 
@@ -14,7 +14,8 @@ Machine-readable output for the Omarchy plugin and scripts. Prefer `--json` with
       "label": "pip cache",
       "path": "/home/me/.cache/pip",
       "bytes": 123456,
-      "selected": true
+      "selected": true,
+      "skip_reason": null
     }
   ],
   "total_bytes": 123456,
@@ -22,6 +23,8 @@ Machine-readable output for the Omarchy plugin and scripts. Prefer `--json` with
   "removed": 0
 }
 ```
+
+Busy items set `selected` to `false` and fill `skip_reason` (for example `"firefox busy"`).
 
 ## `omakeeper purge --dry-run --json`
 
@@ -42,14 +45,89 @@ Array of artifacts:
 
 ## `omakeeper installer --dry-run --json`
 
-Array of installer files (name, path, source, bytes, selected).
+Array of installer files (`name`, `path`, `source`, `bytes`, `selected`). Interactive defaults leave `selected` false; `--yes` selects all.
+
+## `omakeeper analyze --json [PATH]`
+
+Without `PATH`, `overview` is true and `entries` are the home overview roots. With `PATH`, `entries` are that directory's children.
+
+```json
+{
+  "path": "/home/me",
+  "overview": true,
+  "entries": [
+    { "name": "Home", "path": "/home/me", "size": 80939438080, "is_dir": true }
+  ],
+  "large_files": [],
+  "total_size": 80939438080,
+  "total_files": 0
+}
+```
+
+## `omakeeper status --json`
+
+One-shot snapshot. `omakeeper status --watch --json` streams NDJSON.
+
+```json
+{
+  "host": "arch",
+  "health_score": 92,
+  "uptime": "3d 12h 45m",
+  "cpu": { "usage": 45.2, "logical_cpu": 16, "load": [0.82, 1.05, 1.23] },
+  "memory": { "total": 34359738368, "used": 20078972109, "available": 14280766259, "used_percent": 58.4 },
+  "disks": [],
+  "network": { "down_bps": 540000, "up_bps": 20000 },
+  "processes": [],
+  "zombie_count": 0,
+  "zombie_parents": []
+}
+```
+
+Piped stdout (not a TTY) also emits JSON for `status`.
+
+## `omakeeper optimize --dry-run --json`
+
+```json
+{
+  "dry_run": true,
+  "diagnosis": ["Free space 240GiB", "User journal 3.5GiB (vacuum recommended)"],
+  "tasks": [
+    {
+      "id": "journal-user",
+      "label": "Vacuum user journal (7d)",
+      "detail": "current 3.5GiB",
+      "bytes": 3758096384,
+      "selected": true,
+      "status": "ready"
+    }
+  ],
+  "applied": 0,
+  "skipped": 1,
+  "unavailable": 0,
+  "freed_bytes": 0
+}
+```
+
+`omakeeper optimize --whitelist --json` prints the skipped task id array.
+
+## `omakeeper uninstall --dry-run --json [PACKAGES…]`
+
+Without package names, lists removable explicit packages (`selected` false). With names, includes leftover dirs and `pacman -Rns` targets.
+
+```json
+{
+  "dry_run": true,
+  "packages": [
+    { "name": "vlc", "description": "media player", "bytes": 52428800, "selected": true }
+  ],
+  "leftovers": [
+    { "package": "vlc", "path": "/home/me/.config/vlc", "bytes": 4096 }
+  ],
+  "pacman_targets": ["vlc"],
+  "freed_bytes": 52432896
+}
+```
 
 ## `omakeeper history --json`
 
-Array of log entries (ts, command, dry_run, freed_bytes, items, detail).
-
-## Planned
-
-- `omakeeper status --json` / `--watch`
-- `omakeeper analyze --json <path>`
-- `omakeeper clean apply --json` with explicit item ids
+Array of log entries (`ts`, `command`, `dry_run`, `freed_bytes`, `items`, `detail`).

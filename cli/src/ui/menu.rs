@@ -48,29 +48,29 @@ const ITEMS: &[Item] = &[
         key: '5',
         title: "Uninstall",
         subtitle: "Remove packages + leftovers",
-        command: None,
-        planned: true,
+        command: Some("uninstall"),
+        planned: false,
     },
     Item {
         key: '6',
         title: "Optimize",
         subtitle: "Bounded system maintenance",
-        command: None,
-        planned: true,
+        command: Some("optimize"),
+        planned: false,
     },
     Item {
         key: '7',
         title: "Analyze",
         subtitle: "Disk explorer",
-        command: None,
-        planned: true,
+        command: Some("analyze"),
+        planned: false,
     },
     Item {
         key: '8',
         title: "Status",
         subtitle: "Live system health",
-        command: None,
-        planned: true,
+        command: Some("status"),
+        planned: false,
     },
 ];
 
@@ -120,7 +120,7 @@ pub fn run(_json: bool) -> Result<()> {
                 KeyCode::Char('d') => {
                     if let Some(idx) = state.selected() {
                         if let Some(cmd) = ITEMS[idx].command {
-                            if matches!(cmd, "clean" | "purge" | "installer") {
+                            if matches!(cmd, "clean" | "purge" | "installer" | "uninstall" | "optimize") {
                                 break MenuAction::Run {
                                     command: cmd,
                                     dry_run: true,

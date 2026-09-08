@@ -1,4 +1,5 @@
 use crate::history;
+use crate::ui::picker::{self, PickItem};
 use crate::util;
 use anyhow::Result;
 use serde::Serialize;
@@ -189,8 +190,38 @@ fn age_label(days: i64) -> String {
     }
 }
 
+fn print_artifacts(artifacts: &[Artifact]) {
+    println!("Purge project artifacts\n");
+    if artifacts.is_empty() {
+        println!("No artifacts found under configured roots.");
+        return;
+    }
+    for a in artifacts {
+        let mark = if a.selected { "●" } else { "○" };
+        println!(
+            "  {mark} {:<28} {:>10} | {:<12} | {}",
+            truncate_path(&a.project, 28),
+            util::format_bytes(a.bytes),
+            a.name,
+            age_label(a.age_days)
+        );
+    }
+    let selected_bytes: u64 = artifacts
+        .iter()
+        .filter(|a| a.selected)
+        .map(|a| a.bytes)
+        .sum();
+    let selected_count = artifacts.iter().filter(|a| a.selected).count();
+    println!(
+        "\nSelected: {} · {}",
+        util::format_bytes(selected_bytes),
+        selected_count
+    );
+    println!("(○ = modified in last 7 days, skipped by default)");
+}
+
 pub fn run(dry_run: bool, yes: bool, json: bool) -> Result<()> {
-    let artifacts = scan()?;
+    let mut artifacts = scan()?;
     let selected_bytes: u64 = artifacts
         .iter()
         .filter(|a| a.selected)
@@ -204,30 +235,54 @@ pub fn run(dry_run: bool, yes: bool, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("Purge project artifacts\n");
     if artifacts.is_empty() {
         println!("No artifacts found under configured roots.");
         return Ok(());
     }
 
-    for a in &artifacts {
-        let mark = if a.selected { "●" } else { "○" };
-        println!(
-            "  {mark} {:<28} {:>10} | {:<12} | {}",
-            truncate_path(&a.project, 28),
-            util::format_bytes(a.bytes),
-            a.name,
-            age_label(a.age_days)
-        );
+    if !yes && !json {
+        if util::is_tty() {
+            let mut rows: Vec<PickItem> = artifacts
+                .iter()
+                .map(|a| PickItem {
+                    selected: a.selected,
+                    locked: false,
+                    title: format!("{}  {}", a.name, truncate_path(&a.project, 28)),
+                    detail: format!("{} · {}", a.project, age_label(a.age_days)),
+                    bytes: a.bytes,
+                })
+                .collect();
+            if !picker::select_items("Purge project artifacts", &mut rows)? {
+                println!("Aborted.");
+                return Ok(());
+            }
+            for (artifact, row) in artifacts.iter_mut().zip(rows) {
+                artifact.selected = row.selected;
+            }
+        } else {
+            print_artifacts(&artifacts);
+            println!("\nPass --yes to delete the default selection, or run in a terminal to pick.");
+            return Ok(());
+        }
+    } else if !json {
+        print_artifacts(&artifacts);
     }
-    println!(
-        "\nSelected: {} · {}",
-        util::format_bytes(selected_bytes),
-        selected_count
-    );
-    println!("(○ = modified in last 7 days, skipped by default)");
+
+    let selected_bytes: u64 = artifacts
+        .iter()
+        .filter(|a| a.selected)
+        .map(|a| a.bytes)
+        .sum();
+    let selected_count = artifacts.iter().filter(|a| a.selected).count();
 
     if dry_run {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&artifacts)?);
+        } else if yes || !util::is_tty() {
+            // already printed
+        } else {
+            print_artifacts(&artifacts);
+        }
         history::log_operation("purge", true, selected_bytes, selected_count, "scan")?;
         println!("\nRe-run without --dry-run to delete selected artifacts.");
         return Ok(());

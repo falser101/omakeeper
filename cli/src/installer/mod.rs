@@ -1,11 +1,12 @@
 use crate::history;
+use crate::ui::picker::{self, PickItem};
 use crate::util;
 use anyhow::Result;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 const EXTENSIONS: &[&str] = &[
-    "iso", "img", "dmg", "pkg", "mpkg", "appimage", "AppImage", "deb", "rpm", "msi", "exe", "xip",
+    "iso", "img", "dmg", "pkg", "mpkg", "appimage", "deb", "rpm", "msi", "exe", "xip", "run",
     "pkg.tar.zst", "pkg.tar.xz", "pkg.tar.gz", "tar.zst",
 ];
 
@@ -19,12 +20,15 @@ pub struct InstallerFile {
 }
 
 fn search_roots() -> Result<Vec<(String, PathBuf)>> {
-    // Package-manager caches are handled by `clean` (yay/paru). Installer
-    // focuses on leftover downloads the user dropped on the desktop.
     let home = util::home_dir()?;
     Ok(vec![
         ("Downloads".into(), home.join("Downloads")),
         ("Desktop".into(), home.join("Desktop")),
+        ("Documents".into(), home.join("Documents")),
+        ("Public".into(), home.join("Public")),
+        ("Telegram".into(), home.join("Downloads/Telegram Desktop")),
+        ("Telegram".into(), home.join(".local/share/TelegramDesktop")),
+        ("WeChat".into(), home.join("Documents/xwechat_files")),
     ])
 }
 
@@ -34,20 +38,31 @@ fn matches_installer(path: &Path) -> bool {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    EXTENSIONS.iter().any(|ext| {
-        let e = ext.to_ascii_lowercase();
-        name.ends_with(&format!(".{e}"))
-    })
+    EXTENSIONS.iter().any(|ext| name.ends_with(&format!(".{ext}")))
+}
+
+fn source_for(path: &Path, roots: &[(String, PathBuf)]) -> String {
+    for (name, root) in roots {
+        if path.starts_with(root) {
+            return name.clone();
+        }
+    }
+    path.parent()
+        .and_then(|p| p.file_name())
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "other".into())
 }
 
 fn scan() -> Result<Vec<InstallerFile>> {
+    let roots = search_roots()?;
     let mut files = Vec::new();
-    for (source, root) in search_roots()? {
+    let mut seen = std::collections::HashSet::new();
+    for (source, root) in &roots {
         if !root.is_dir() {
             continue;
         }
-        let depth = if source.contains("cache") { 3 } else { 2 };
-        for entry in walkdir::WalkDir::new(&root)
+        let depth = if source == "Telegram" { 3 } else { 2 };
+        for entry in walkdir::WalkDir::new(root)
             .max_depth(depth)
             .follow_links(false)
             .into_iter()
@@ -60,19 +75,20 @@ fn scan() -> Result<Vec<InstallerFile>> {
             if !matches_installer(path) {
                 continue;
             }
+            let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            if !seen.insert(canon) {
+                continue;
+            }
             let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
             if bytes == 0 {
                 continue;
             }
             files.push(InstallerFile {
-                name: entry
-                    .file_name()
-                    .to_string_lossy()
-                    .to_string(),
+                name: entry.file_name().to_string_lossy().to_string(),
                 path: path.display().to_string(),
-                source: source.clone(),
+                source: source_for(path, &roots),
                 bytes,
-                selected: true,
+                selected: false,
             });
         }
     }
@@ -80,49 +96,103 @@ fn scan() -> Result<Vec<InstallerFile>> {
     Ok(files)
 }
 
-pub fn run(dry_run: bool, yes: bool, json: bool) -> Result<()> {
-    let files = scan()?;
+fn print_human(files: &[InstallerFile]) {
+    println!("Installer files\n");
+    if files.is_empty() {
+        println!("No installer files found.");
+        return;
+    }
+    for f in files {
+        let mark = if f.selected { "●" } else { "○" };
+        println!(
+            "  {mark} {:<36} {:>10} | {}",
+            util::truncate_right(&f.name, 36),
+            util::format_bytes(f.bytes),
+            f.source
+        );
+    }
     let total: u64 = files.iter().filter(|f| f.selected).map(|f| f.bytes).sum();
     let count = files.iter().filter(|f| f.selected).count();
+    println!(
+        "\nSelected: {} · {count} files",
+        util::format_bytes(total)
+    );
+}
+
+fn pick(files: &mut [InstallerFile]) -> Result<bool> {
+    let mut rows: Vec<PickItem> = files
+        .iter()
+        .map(|f| PickItem {
+            selected: f.selected,
+            locked: false,
+            title: f.name.clone(),
+            detail: format!("{}  {}", f.source, f.path),
+            bytes: f.bytes,
+        })
+        .collect();
+    let ok = picker::select_items("Select installers to remove", &mut rows)?;
+    if ok {
+        for (file, row) in files.iter_mut().zip(rows) {
+            file.selected = row.selected;
+        }
+    }
+    Ok(ok)
+}
+
+pub fn run(dry_run: bool, yes: bool, json: bool) -> Result<()> {
+    let mut files = scan()?;
 
     if json && dry_run {
         println!("{}", serde_json::to_string_pretty(&files)?);
-        history::log_operation("installer", true, total, count, "scan")?;
+        history::log_operation("installer", true, 0, files.len(), "scan")?;
         return Ok(());
     }
 
-    println!("Installer files\n");
     if files.is_empty() {
         println!("No installer files found.");
         return Ok(());
     }
 
-    for f in &files {
-        let mark = if f.selected { "●" } else { "○" };
-        println!(
-            "  {mark} {:<36} {:>10} | {}",
-            truncate(&f.name, 36),
-            util::format_bytes(f.bytes),
-            f.source
-        );
+    if yes {
+        for f in &mut files {
+            f.selected = true;
+        }
+    } else if !json {
+        if util::is_tty() {
+            if !pick(&mut files)? {
+                println!("Aborted.");
+                return Ok(());
+            }
+        } else {
+            print_human(&files);
+            println!("\nPass --yes to delete all found installers, or run in a terminal to pick.");
+            return Ok(());
+        }
     }
-    println!(
-        "\nSelected: {} · {} files",
-        util::format_bytes(total),
-        count
-    );
+
+    let total: u64 = files.iter().filter(|f| f.selected).map(|f| f.bytes).sum();
+    let count = files.iter().filter(|f| f.selected).count();
 
     if dry_run {
+        if !json {
+            print_human(&files);
+            println!("\nRe-run without --dry-run to delete selected files.");
+        } else {
+            println!("{}", serde_json::to_string_pretty(&files)?);
+        }
         history::log_operation("installer", true, total, count, "scan")?;
-        println!("\nRe-run without --dry-run to delete selected files.");
+        return Ok(());
+    }
+
+    if count == 0 {
+        println!("Nothing selected.");
         return Ok(());
     }
 
     if !yes
         && !util::confirm(&format!(
-            "Delete {} across {} installer files?",
-            util::format_bytes(total),
-            count
+            "Delete {} across {count} installer files?",
+            util::format_bytes(total)
         ))?
     {
         println!("Aborted.");
@@ -145,18 +215,24 @@ pub fn run(dry_run: bool, yes: bool, json: bool) -> Result<()> {
         }
     }
     println!(
-        "\nInstallers cleaned\nFreed {} · {} files",
-        util::format_bytes(freed),
-        removed
+        "\nInstallers cleaned\nFreed {} · {removed} files",
+        util::format_bytes(freed)
     );
     history::log_operation("installer", false, freed, removed, "apply")?;
     Ok(())
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        return s.to_string();
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_linux_and_generic_installers() {
+        assert!(matches_installer(Path::new("/tmp/Foo.AppImage")));
+        assert!(matches_installer(Path::new("/tmp/archlinux.iso")));
+        assert!(matches_installer(Path::new("/tmp/pkg.pkg.tar.zst")));
+        assert!(matches_installer(Path::new("/tmp/setup.run")));
+        assert!(!matches_installer(Path::new("/tmp/notes.zip")));
+        assert!(!matches_installer(Path::new("/tmp/photo.png")));
     }
-    let t: String = s.chars().take(max.saturating_sub(1)).collect();
-    format!("{t}…")
 }
