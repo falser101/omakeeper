@@ -24,7 +24,7 @@ Machine-readable output for the Omarchy plugin and scripts. Prefer `--json` with
 }
 ```
 
-Busy items set `selected` to `false` and fill `skip_reason` (for example `"firefox busy"`).
+Busy items set `selected` to `false` and fill `skip_reason` (for example `"firefox busy"`). Optional `action` is set for command-backed items (`pacman-sc`, `flatpak-unused`) instead of a plain directory delete. Leftovers, old downloads, Steam shader cache, Gradle, and pacman package cache start unselected.
 
 ## `omakeeper purge --dry-run --json`
 

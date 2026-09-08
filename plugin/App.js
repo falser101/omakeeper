@@ -86,6 +86,7 @@ function allBytes(items) {
 }
 
 function groupClean(items) {
+  var preferred = ["user", "browser", "apps", "dev", "packages", "flatpak", "logs", "leftovers", "downloads", "other"]
   var order = []
   var map = {}
   for (var i = 0; i < items.length; i++) {
@@ -98,6 +99,13 @@ function groupClean(items) {
     map[cat].items.push(it)
     map[cat].bytes += Number(it.bytes || 0)
   }
+  order.sort(function(a, b) {
+    var ia = preferred.indexOf(a)
+    var ib = preferred.indexOf(b)
+    if (ia < 0) ia = preferred.length
+    if (ib < 0) ib = preferred.length
+    return ia - ib
+  })
   return order.map(function(c) { return map[c] })
 }
 
@@ -289,10 +297,13 @@ function cleanCategoryMeta(cat) {
   var assets = {
     user: "cat-user.png",
     browser: "cat-browser.png",
+    apps: "cat-apps.png",
     dev: "cat-dev.png",
     packages: "cat-packages.png",
-    apps: "cat-apps.png",
-    logs: "cat-logs.png"
+    flatpak: "cat-packages.png",
+    logs: "cat-logs.png",
+    leftovers: "cat-other.png",
+    downloads: "cat-folder.png"
   }
   if (!assets[key]) key = "other"
   return { key: key, asset: assets[key] || "cat-other.png" }
