@@ -38,14 +38,15 @@ Item {
     return root.tasks.filter(function(t) { return t.status === "ready" }).length
   }
 
-  AnimalHero {
+  PixelField {
     id: hero
     anchors.horizontalCenter: parent.horizontalCenter
-    anchors.top: parent.top
+    y: Style.space(12)
     width: parent.width
-    animal: "otter"
     mood: (root.applying || root.scanning) ? "busy" : "idle"
-    creatureSize: Math.min(Style.space(280), parent.width * 0.3)
+    drawField: false
+    markScale: App.CONTENT_MARK_SCALE
+    creatureSize: Style.space(96)
     headline: root.applying ? tr("opt.applying") : (root.scanning ? tr("opt.scanning") : tr("opt.title"))
     subline: root.applying
       ? tr("opt.progress", { n: root.doneCount, t: Math.max(root.readyCount, 1) })

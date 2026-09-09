@@ -1,5 +1,6 @@
 mod analyze;
 mod clean;
+mod etch;
 mod history;
 mod installer;
 mod optimize;
@@ -98,6 +99,9 @@ enum Commands {
         dry_run: bool,
         #[arg(long)]
         yes: bool,
+        /// User leftover dirs to delete (opt-in; omitted dirs are kept)
+        #[arg(long)]
+        leftover: Vec<String>,
         /// Package names (omit to pick interactively)
         packages: Vec<String>,
     },
@@ -117,6 +121,12 @@ enum Commands {
     /// Move paths to the XDG trash
     Trash {
         paths: Vec<String>,
+    },
+    /// Stream OMARCHY wordmark etch frames from ttfx as JSONL
+    Etch {
+        /// Effect name, or random (default)
+        #[arg(long, default_value = "random")]
+        effect: String,
     },
 }
 
@@ -166,8 +176,9 @@ fn main() -> Result<()> {
         Some(Commands::Uninstall {
             dry_run,
             yes,
+            leftover,
             packages,
-        }) => uninstall::run(dry_run, yes, cli.json, &packages),
+        }) => uninstall::run(dry_run, yes, cli.json, &packages, &leftover),
         Some(Commands::Optimize {
             dry_run,
             yes,
@@ -181,6 +192,7 @@ fn main() -> Result<()> {
             }
         }
         Some(Commands::Trash { paths }) => trash_paths(&paths, cli.json),
+        Some(Commands::Etch { effect }) => etch::run(Some(effect.as_str())),
     }
 }
 

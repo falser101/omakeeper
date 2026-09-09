@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "App.js" as App
 import "I18n.js" as I18n
 
 Item {
@@ -20,14 +21,15 @@ Item {
 
   function tr(key, vars) { return I18n.t(key, vars, root.uiLang) }
 
-  AnimalHero {
+  PixelField {
     id: hero
     anchors.horizontalCenter: parent.horizontalCenter
-    y: Style.space(24)
+    y: Style.space(12)
     width: parent.width
-    animal: "chameleon"
     mood: "idle"
-    creatureSize: Math.min(Style.space(220), parent.width * 0.28)
+    drawField: false
+    markScale: App.CONTENT_MARK_SCALE
+    creatureSize: Style.space(96)
     headline: root.tr("settings.title")
     subline: root.tr("settings.langHint")
     foreground: root.foreground

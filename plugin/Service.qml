@@ -71,10 +71,15 @@ Item {
     return true
   }
 
-  function applyUninstall(names) {
+  function applyUninstall(names, leftoverPaths) {
     root.kind = "uninstall-apply"
     root.lastError = ""
-    var args = [root.bin, "uninstall", "--yes"]
+    var args = [root.bin, "uninstall", "--yes", "--json"]
+    var extras = leftoverPaths || []
+    for (var j = 0; j < extras.length; j++) {
+      args.push("--leftover")
+      args.push(extras[j])
+    }
     for (var i = 0; i < names.length; i++) args.push(names[i])
     proc.command = args
     proc.running = true

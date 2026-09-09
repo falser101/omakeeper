@@ -29,6 +29,7 @@ Item {
 
   Flickable {
     id: crumbRow
+    z: 2
     width: parent.width
     height: Style.space(22)
     clip: true
@@ -64,8 +65,27 @@ Item {
     onContentWidthChanged: contentX = Math.max(0, contentWidth - width)
   }
 
+  PixelField {
+    id: jup
+    anchors.horizontalCenter: parent.horizontalCenter
+    y: Style.space(12)
+    width: parent.width
+    creatureSize: Style.space(96)
+    mood: root.scanning ? "busy" : "idle"
+    drawField: false
+    markScale: App.CONTENT_MARK_SCALE
+    showCaption: true
+    headline: App.formatBytes((root.report && root.report.total_size) || 0)
+    subline: root.tr("tab.analyze")
+    foreground: root.foreground
+    fontFamily: root.fontFamily
+    uiLang: root.uiLang
+    accent: root.accent
+    urgent: root.urgent
+  }
+
   Row {
-    anchors.top: crumbRow.bottom
+    anchors.top: jup.bottom
     anchors.topMargin: Style.spacing.md
     anchors.left: parent.left
     anchors.right: parent.right
@@ -77,36 +97,9 @@ Item {
       height: parent.height
       color: "transparent"
 
-      AnimalHero {
-        id: jup
-        width: Style.space(120)
-        height: Style.space(120)
-        creatureSize: Style.space(120)
-        animal: "owl"
-        mood: root.scanning ? "busy" : "idle"
-        showCaption: false
-        anchors.horizontalCenter: parent.horizontalCenter
-        uiLang: root.uiLang
-        accent: root.accent
-        urgent: root.urgent
-      }
-      Text {
-        anchors.top: jup.bottom
-        anchors.topMargin: Style.spacing.sm
-        anchors.horizontalCenter: parent.horizontalCenter
-        text: App.formatBytes((root.report && root.report.total_size) || 0)
-        color: root.foreground
-        font.bold: true
-        font.family: root.fontFamily
-      }
-
       ListView {
         id: side
-        anchors.top: jup.bottom
-        anchors.topMargin: Style.space(48)
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
+        anchors.fill: parent
         clip: true
         model: (root.report && root.report.entries) ? root.report.entries : []
         delegate: Rectangle {

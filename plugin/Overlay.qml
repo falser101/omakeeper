@@ -58,7 +58,13 @@ Item {
   property var pkgSelected: ({})
   property var pkgExpanded: ({})
   property var pkgLeftovers: ({})
+  property var pkgRequiredBy: ({})
+  property var pkgLeftoverSelected: ({})
   property string pkgQuery: ""
+  property string softPhase: "idle"
+  property real softFreed: 0
+  property int softPkgs: 0
+  property int softFiles: 0
   property var analyzeReport: ({ path: "", entries: [], total_size: 0, overview: true })
   property var analyzeCrumbs: []
   property var statusSnap: ({})
@@ -244,10 +250,37 @@ Item {
     root.dataRev += 1
   }
 
+  function selectRequiredBy(name, selected) {
+    var deps = root.pkgRequiredBy[name] || []
+    for (var i = 0; i < deps.length; i++) {
+      if (!deps[i].protected)
+        selected[deps[i].name] = true
+    }
+    return selected
+  }
+
   function togglePkg(name) {
     var n = copyMap(root.pkgSelected)
-    n[name] = !n[name]
+    var on = !n[name]
+    n[name] = on
+    if (on) {
+      n = root.selectRequiredBy(name, n)
+      var e = copyMap(root.pkgExpanded)
+      if (!e[name]) {
+        e[name] = true
+        root.pkgExpanded = e
+      }
+      if (!root.pkgRequiredBy[name])
+        cli.scanUninstallPkg(name)
+    }
     root.pkgSelected = n
+    root.dataRev += 1
+  }
+
+  function toggleLeftover(path) {
+    var n = copyMap(root.pkgLeftoverSelected)
+    n[path] = !n[path]
+    root.pkgLeftoverSelected = n
     root.dataRev += 1
   }
 
@@ -255,7 +288,7 @@ Item {
     var n = copyMap(root.pkgExpanded)
     n[name] = !n[name]
     root.pkgExpanded = n
-    if (n[name] && !root.pkgLeftovers[name])
+    if (n[name] && !root.pkgRequiredBy[name])
       cli.scanUninstallPkg(name)
     root.dataRev += 1
   }
@@ -266,8 +299,30 @@ Item {
     confirm.opened = true
   }
 
+  function formatUninstallError(raw) {
+    var s = String(raw || "").trim()
+    var lines = s.split("\n")
+    var i
+    for (i = 0; i < lines.length; i++) {
+      var line = lines[i].trim()
+      if (line.indexOf("blocked\t") === 0) {
+        var parts = line.split("\t")
+        return root.tr("soft.blocked", { pkg: parts[1] || "", deps: parts[2] || "" })
+      }
+    }
+    if (s.indexOf("blocked\t") === 0) {
+      var p2 = s.split("\t")
+      return root.tr("soft.blocked", { pkg: p2[1] || "", deps: p2[2] || "" })
+    }
+    return s
+  }
+
   function doConfirm() {
     confirm.opened = false
+    if (root.confirmKind === "ack") {
+      root.confirmKind = ""
+      return
+    }
     if (root.confirmKind === "clean") {
       var picked = App.selectedItems(root.cleanItems, root.cleanSelected)
       root.cleanProgress = []
@@ -289,8 +344,32 @@ Item {
       cli.applyOptimize(ids)
     } else if (root.confirmKind === "uninstall") {
       var names = []
-      for (var p in root.pkgSelected) if (root.pkgSelected[p]) names.push(p)
-      cli.applyUninstall(names)
+      var leftoverPaths = []
+      var bytes = 0
+      var files = 0
+      for (var p in root.pkgSelected) {
+        if (!root.pkgSelected[p]) continue
+        names.push(p)
+        for (var i = 0; i < root.packages.length; i++) {
+          if (root.packages[i].name === p)
+            bytes += Number(root.packages[i].bytes || 0)
+        }
+      }
+      for (var pack in root.pkgLeftovers) {
+        if (!root.pkgSelected[pack]) continue
+        var rows = root.pkgLeftovers[pack] || []
+        for (var j = 0; j < rows.length; j++) {
+          if (!root.pkgLeftoverSelected[rows[j].path]) continue
+          leftoverPaths.push(rows[j].path)
+          files += 1
+          bytes += Number(rows[j].bytes || 0)
+        }
+      }
+      root.softPkgs = names.length
+      root.softFiles = files
+      root.softFreed = bytes
+      root.softPhase = "applying"
+      cli.applyUninstall(names, leftoverPaths)
     } else if (root.confirmKind.indexOf("trash:") === 0) {
       cli.trashPaths([root.confirmKind.substring(6)])
     }
@@ -352,17 +431,56 @@ Item {
         cli.scanHistory()
       } else if (kind === "uninstall-scan" && data && data.packages) {
         root.packages = App.attachPackageIcons(data.packages, root.desktopIndex, root.appLibrary)
+        var lo = ({})
+        var rb = ({})
+        var leftovers = data.leftovers || []
+        for (var i = 0; i < leftovers.length; i++) {
+          var pack = leftovers[i].package
+          if (!lo[pack]) lo[pack] = []
+          lo[pack].push(leftovers[i])
+        }
+        for (var j = 0; j < root.packages.length; j++) {
+          var pkg = root.packages[j]
+          rb[pkg.name] = pkg.required_by || []
+        }
+        root.pkgLeftovers = lo
+        root.pkgRequiredBy = rb
+        root.pkgLeftoverSelected = ({})
+        root.pkgExpanded = ({})
         root.dataRev += 1
       } else if (kind === "uninstall-pkg" && data) {
         var leftovers = copyMap(root.pkgLeftovers)
+        var required = copyMap(root.pkgRequiredBy)
         var name = (data.packages && data.packages[0]) ? data.packages[0].name : ""
         leftovers[name] = data.leftovers || []
+        required[name] = data.required_by || []
         root.pkgLeftovers = leftovers
+        root.pkgRequiredBy = required
+        if (name && !(required[name] || []).length && !(leftovers[name] || []).length) {
+          var closed = copyMap(root.pkgExpanded)
+          closed[name] = false
+          root.pkgExpanded = closed
+        }
+        if (name && root.pkgSelected[name]) {
+          root.pkgSelected = root.selectRequiredBy(name, copyMap(root.pkgSelected))
+        }
         root.dataRev += 1
       } else if (kind === "uninstall-apply") {
-        root.pkgSelected = ({})
-        cli.scanUninstall()
-        cli.scanHistory()
+        if (error) {
+          root.softPhase = "idle"
+          root.ask("ack", root.formatUninstallError(error))
+        } else {
+          if (data && data.freed_bytes != null)
+            root.softFreed = Number(data.freed_bytes)
+          if (data && data.packages != null)
+            root.softPkgs = Number(data.packages)
+          if (data && data.leftovers != null)
+            root.softFiles = Number(data.leftovers)
+          root.historyTotals.uninstalled += root.softFreed
+          root.softPhase = "done"
+          root.pkgSelected = ({})
+          cli.scanHistory()
+        }
       } else if (kind === "analyze" && data) {
         root.analyzeReport = data
         root.dataRev += 1
@@ -430,6 +548,29 @@ Item {
       borderSpec: root.borderSpec
       padding: Style.spacing.panelPadding
 
+      PixelField {
+        id: edgeField
+        anchors.fill: parent
+        z: 0
+        fillHost: true
+        showMark: false
+        showCaption: false
+        drawField: true
+        interactive: false
+        etch: false
+        stamps: false
+        mood: {
+          if (root.tab === 0 && cli.busy && cli.kind === "clean-scan")
+            return "busy"
+          if (root.tab === 1 && cli.busy && cli.kind === "uninstall-scan" && !root.packages.length)
+            return "busy"
+          return "idle"
+        }
+        accent: root.accent
+        urgent: root.urgent
+        foreground: root.foreground
+      }
+
       Item {
         id: keyCatcher
         anchors.fill: parent
@@ -457,6 +598,7 @@ Item {
       }
 
       Column {
+        z: 1
         anchors.fill: parent
         anchors.topMargin: card.contentTopInset
         anchors.rightMargin: card.contentRightInset
@@ -532,6 +674,7 @@ Item {
             skipped: root.cleanSkipped
             elapsedMs: root.cleanElapsed
             foreground: root.foreground
+            pageBg: root.pageBg
             appLibrary: root.appLibrary
             desktopIndex: root.desktopIndex
             onToggleId: function(id) { root.toggleClean(id) }
@@ -559,15 +702,23 @@ Item {
             packages: root.packages
             selected: root.pkgSelected
             leftovers: root.pkgLeftovers
+            leftoverSelected: root.pkgLeftoverSelected
+            requiredBy: root.pkgRequiredBy
             expanded: root.pkgExpanded
             revision: root.dataRev
             query: root.pkgQuery
             scanning: cli.busy && cli.kind.indexOf("uninstall") === 0
             applying: cli.busy && cli.kind === "uninstall-apply"
+            phase: root.softPhase
+            freedNow: root.softFreed
+            removedPkgs: root.softPkgs
+            removedFiles: root.softFiles
             foreground: root.foreground
+            pageBg: root.pageBg
             appLibrary: root.appLibrary
             desktopIndex: root.desktopIndex
             onTogglePkg: function(name) { root.togglePkg(name) }
+            onToggleLeftover: function(path) { root.toggleLeftover(path) }
             onExpandPkg: function(name) { root.expandPkg(name) }
             onQueryChangedByUser: function(v) { root.pkgQuery = v; root.dataRev += 1 }
             uiLang: root.uiLang
@@ -577,7 +728,27 @@ Item {
             onApplyRequested: {
               var n = 0
               for (var k in root.pkgSelected) if (root.pkgSelected[k]) n++
-              root.ask("uninstall", root.tr("soft.ask", { n: n }))
+              var files = 0
+              for (var pack in root.pkgLeftovers) {
+                if (!root.pkgSelected[pack]) continue
+                var rows = root.pkgLeftovers[pack] || []
+                for (var j = 0; j < rows.length; j++) {
+                  if (root.pkgLeftoverSelected[rows[j].path]) files++
+                }
+              }
+              root.ask("uninstall", files
+                ? root.tr("soft.askWithLeft", { n: n, files: files })
+                : root.tr("soft.ask", { n: n }))
+            }
+            onResetRequested: {
+              root.softPhase = "idle"
+              root.softFreed = 0
+              root.softPkgs = 0
+              root.softFiles = 0
+              root.pkgRequiredBy = ({})
+              root.pkgLeftovers = ({})
+              root.pkgLeftoverSelected = ({})
+              cli.scanUninstall()
             }
           }
 
@@ -651,9 +822,10 @@ Item {
 
       ConfirmDialog {
         id: confirm
+        z: 30
         anchors.fill: parent
         message: root.confirmMessage
-        confirmText: root.tr("confirm")
+        confirmText: root.confirmKind === "ack" ? root.tr("gotIt") : root.tr("confirm")
         cancelText: root.tr("cancel")
         background: root.pageBg
         foreground: root.foreground
@@ -662,7 +834,7 @@ Item {
       }
 
       Text {
-        visible: cli.lastError.length > 0 && !confirm.opened
+        visible: cli.lastError.length > 0 && !confirm.opened && root.confirmKind !== "ack"
         anchors.left: parent.left
         anchors.bottom: parent.bottom
         anchors.margins: Style.spacing.md

@@ -18,6 +18,15 @@ Item {
   property color foreground: Color.menu.text
   property color accent: Color.accent
   property color urgent: Color.urgent
+  property color pageBg: Color.menu.background
+
+  // Opaque enough that the edge pixel-field cannot punch through labels.
+  function cardFill(hover, header) {
+    var t = hover ? (header ? 0.14 : 0.11) : (header ? 0.09 : 0.07)
+    var bg = root.pageBg
+    var fg = root.foreground
+    return Qt.rgba(bg.r * (1 - t) + fg.r * t, bg.g * (1 - t) + fg.g * t, bg.b * (1 - t) + fg.b * t, 1)
+  }
   property string fontFamily: Style.font.menuFamily
   property string uiLang: "en"
   function tr(key, vars) { return I18n.t(key, vars, root.uiLang) }
@@ -71,19 +80,26 @@ Item {
     root.expanded = n
   }
 
-  AnimalHero {
+  PixelField {
     id: hero
     visible: !root.stageApply && !root.stageDone
     anchors.horizontalCenter: parent.horizontalCenter
     width: parent.width
-    y: root.idle
+    y: (root.idle || root.scanning)
       ? Math.max(Style.space(24), (footer.y - implicitHeight) / 2)
       : Style.space(12)
-    animal: "cat"
     mood: root.scanning ? "busy" : "idle"
+    drawField: false
+    etch: root.idle
+    stamps: false
+    interactive: true
+    markScale: (root.items.length && !root.scanning) ? App.CONTENT_MARK_SCALE : 1.0
+    Behavior on y {
+      NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+    }
     creatureSize: root.idle
-      ? Math.min(Style.space(300), parent.width * 0.32)
-      : Style.space(120)
+      ? Math.min(Style.space(220), parent.width * 0.22)
+      : Style.space(96)
     headline: {
       if (root.scanning) return tr("clean.scanning")
       if (root.applying) return tr("clean.applying")
@@ -143,9 +159,7 @@ Item {
         })
       }
       radius: modelData.kind === "header" ? Math.max(Style.cornerRadius, Style.space(8)) : Style.cornerRadius
-      color: modelData.kind === "header"
-        ? (mouse.containsMouse ? Util.alpha(root.foreground, 0.10) : Util.alpha(root.foreground, 0.05))
-        : (mouse.containsMouse ? Util.alpha(root.foreground, 0.07) : "transparent")
+      color: root.cardFill(mouse.containsMouse, modelData.kind === "header")
       opacity: modelData.skip_reason ? 0.45 : 1
 
       MouseArea {
@@ -371,14 +385,14 @@ Item {
     visible: root.stageApply
     anchors.fill: parent
 
-    AnimalHero {
+    PixelField {
       id: applyHero
       anchors.horizontalCenter: parent.horizontalCenter
       y: Style.space(24)
       width: parent.width
-      animal: "cat"
       mood: "busy"
-      creatureSize: Math.min(Style.space(280), parent.width * 0.36)
+      drawField: false
+      creatureSize: Math.min(Style.space(180), parent.width * 0.22)
       headline: App.formatBytes(root.freedNow)
       subline: {
         var cur = root.progressCurrent || ({})
@@ -450,15 +464,15 @@ Item {
     visible: root.stageDone
     anchors.fill: parent
 
-    AnimalHero {
+    PixelField {
       id: doneHero
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.verticalCenter: parent.verticalCenter
       anchors.verticalCenterOffset: -Style.space(24)
       width: parent.width
-      animal: "cat"
       mood: "celebrate"
-      creatureSize: Math.min(Style.space(300), parent.width * 0.36)
+      drawField: false
+      creatureSize: Math.min(Style.space(200), parent.width * 0.22)
       headline: App.formatBytes(root.freedNow)
       subline: tr("clean.doneSub", {
         mins: App.fourKMinutes(root.freedNow),

@@ -48,8 +48,21 @@ Item {
 
   Column {
     id: top
+    y: Style.space(12)
     width: parent.width
     spacing: root.gap
+
+    PixelField {
+      width: parent.width
+      creatureSize: Style.space(96)
+      mood: Number(root.snap.health_score || 100) < 70 ? "busy" : "idle"
+      drawField: false
+      markScale: App.CONTENT_MARK_SCALE
+      showCaption: false
+      uiLang: root.uiLang
+      accent: root.accent
+      urgent: root.urgent
+    }
 
     Grid {
       width: parent.width
@@ -62,8 +75,7 @@ Item {
           {
             title: tr("status.health"),
             value: String(snap.health_score == null ? "—" : snap.health_score),
-            detail: tr(App.healthKey(snap.health_score)) + "  ·  " + (snap.host || "") + "  ·  " + (snap.uptime || ""),
-            art: "sun"
+            detail: tr(App.healthKey(snap.health_score)) + "  ·  " + (snap.host || "") + "  ·  " + (snap.uptime || "")
           },
           {
             title: tr("status.cpu"),
@@ -93,24 +105,6 @@ Item {
           radius: Style.cornerRadius
           color: Util.alpha(root.foreground, 0.06)
 
-          Loader {
-            active: modelData.art === "sun"
-            anchors.right: parent.right
-            anchors.rightMargin: Style.spacing.md
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(88)
-            height: Style.space(88)
-            sourceComponent: AnimalHero {
-              creatureSize: Style.space(88)
-              animal: "chameleon"
-              mood: Number(root.snap.health_score || 100) < 70 ? "busy" : "idle"
-              showCaption: false
-              uiLang: root.uiLang
-              accent: root.accent
-              urgent: root.urgent
-            }
-          }
-
           Column {
             anchors.fill: parent
             anchors.margins: Style.spacing.md
@@ -130,7 +124,7 @@ Item {
               font.bold: true
             }
             Text {
-              width: parent.width * (modelData.art === "sun" ? 0.55 : 0.95)
+              width: parent.width
               text: modelData.detail
               wrapMode: Text.WordWrap
               color: root.foreground

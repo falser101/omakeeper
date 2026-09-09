@@ -16,7 +16,7 @@ Inspired by the workflow of [Mole](https://github.com/tw93/Mole), rebuilt for Ar
 | `omakeeper status` | ✅ health dashboard (`--watch` for live) |
 | `omakeeper history` | ✅ |
 | `omakeeper whitelist` | ✅ |
-| `omakeeper uninstall` | ✅ pacman -Rns + leftover user dirs (denylist for core packages) |
+| `omakeeper uninstall` | ✅ pacman -Rns; leftover user dirs are opt-in via `--leftover PATH` (denylist for core packages) |
 | `omakeeper optimize` | ✅ journal vacuum, font/icon/MIME caches, DNS flush, tmpfiles, flatpak repair |
 | Omarchy overlay | ✅ five-tab app (清理 / 软件 / 优化 / 分析 / 状态), no terminal hop |
 

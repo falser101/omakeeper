@@ -1,3 +1,6 @@
+// Shared lockup for every tab's content hero (not idle splash / marquee).
+var CONTENT_MARK_SCALE = 0.56
+
 function formatBytes(n) {
   n = Number(n || 0)
   if (n < 1024) return n + " B"
@@ -126,15 +129,37 @@ function historyTotals(entries) {
   return out
 }
 
+function packageLetter(name) {
+  var c = String(name || "").charAt(0).toUpperCase()
+  if (c >= "A" && c <= "Z") return c
+  return "#"
+}
+
 function filterPackages(pkgs, query) {
   var q = String(query || "").trim().toLowerCase()
-  if (!q) return pkgs
+  var list = pkgs || []
   var out = []
-  for (var i = 0; i < pkgs.length; i++) {
-    var p = pkgs[i]
-    var hay = (p.name + " " + (p.description || "")).toLowerCase()
-    if (hay.indexOf(q) >= 0) out.push(p)
+  for (var i = 0; i < list.length; i++) {
+    var p = list[i]
+    if (q) {
+      var hay = (p.name + " " + (p.description || "")).toLowerCase()
+      if (hay.indexOf(q) < 0) continue
+    }
+    out.push(p)
   }
+  out.sort(function(a, b) {
+    var na = String(a.name || "")
+    var nb = String(b.name || "")
+    var la = packageLetter(na)
+    var lb = packageLetter(nb)
+    if (la === "#" && lb !== "#") return -1
+    if (lb === "#" && la !== "#") return 1
+    var xa = na.toLowerCase()
+    var xb = nb.toLowerCase()
+    if (xa < xb) return -1
+    if (xa > xb) return 1
+    return 0
+  })
   return out
 }
 

@@ -112,7 +112,9 @@ Piped stdout (not a TTY) also emits JSON for `status`.
 
 ## `omakeeper uninstall --dry-run --json [PACKAGES…]`
 
-Without package names, lists removable explicit packages (`selected` false). With names, includes leftover dirs and `pacman -Rns` targets.
+Without package names, lists removable explicit packages (`selected` false), each with `required_by`, plus leftover dirs for every listed package. With names, includes leftover dirs, reverse dependents (`required_by` on the report), and `pacman -Rns` targets.
+
+Apply (`omakeeper uninstall --yes [--leftover PATH]… PACKAGES…`) only deletes leftover dirs passed with `--leftover`. Omitted dirs are kept.
 
 ```json
 {
@@ -122,6 +124,9 @@ Without package names, lists removable explicit packages (`selected` false). Wit
   ],
   "leftovers": [
     { "package": "vlc", "path": "/home/me/.config/vlc", "bytes": 4096 }
+  ],
+  "required_by": [
+    { "name": "vlc-plugin", "description": "plugin", "bytes": 1024, "protected": false }
   ],
   "pacman_targets": ["vlc"],
   "freed_bytes": 52432896

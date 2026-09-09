@@ -8,11 +8,21 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ReverseDep {
+    pub name: String,
+    pub description: String,
+    pub bytes: u64,
+    pub protected: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Package {
     pub name: String,
     pub description: String,
     pub bytes: u64,
     pub selected: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_by: Vec<ReverseDep>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,6 +37,7 @@ struct UninstallReport {
     dry_run: bool,
     packages: Vec<Package>,
     leftovers: Vec<Leftover>,
+    required_by: Vec<ReverseDep>,
     pacman_targets: Vec<String>,
     freed_bytes: u64,
 }
@@ -153,38 +164,106 @@ fn parse_packages(text: &str) -> Vec<Package> {
     let mut name = String::new();
     let mut description = String::new();
     let mut bytes = 0u64;
-    let flush = |pkgs: &mut Vec<Package>, name: &mut String, description: &str, bytes: u64| {
+    let mut required_names: Vec<String> = Vec::new();
+    let mut collecting_req = false;
+    let flush = |pkgs: &mut Vec<Package>,
+                 name: &mut String,
+                 description: &str,
+                 bytes: u64,
+                 required_names: &mut Vec<String>| {
         if name.is_empty() || is_protected_package(name) {
             name.clear();
+            required_names.clear();
             return;
         }
+        let required_by = required_names
+            .drain(..)
+            .filter(|n| n != name)
+            .map(|n| ReverseDep {
+                protected: is_protected_package(&n),
+                name: n,
+                description: String::new(),
+                bytes: 0,
+            })
+            .collect();
         pkgs.push(Package {
             name: name.clone(),
             description: description.to_string(),
             bytes,
             selected: false,
+            required_by,
         });
         name.clear();
     };
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("Name") {
-            flush(&mut pkgs, &mut name, &description, bytes);
+            collecting_req = false;
+            flush(
+                &mut pkgs,
+                &mut name,
+                &description,
+                bytes,
+                &mut required_names,
+            );
             description.clear();
             bytes = 0;
-            name = rest.split_once(':').map(|(_, v)| v.trim().to_string()).unwrap_or_default();
+            name = rest
+                .split_once(':')
+                .map(|(_, v)| v.trim().to_string())
+                .unwrap_or_default();
         } else if let Some(rest) = line.strip_prefix("Description") {
+            collecting_req = false;
             description = rest
                 .split_once(':')
                 .map(|(_, v)| v.trim().to_string())
                 .unwrap_or_default();
         } else if let Some(rest) = line.strip_prefix("Installed Size") {
+            collecting_req = false;
             let raw = rest.split_once(':').map(|(_, v)| v.trim()).unwrap_or("");
             bytes = parse_pacman_size(raw);
+        } else if let Some(rest) = line.strip_prefix("Required By") {
+            let v = rest.trim_start_matches([' ', ':']).trim();
+            required_names.clear();
+            if v.eq_ignore_ascii_case("none") || v.is_empty() {
+                collecting_req = false;
+            } else {
+                required_names.extend(v.split_whitespace().map(|s| s.to_string()));
+                collecting_req = true;
+            }
+        } else if collecting_req {
+            if line.starts_with(' ') || line.starts_with('\t') {
+                required_names.extend(line.split_whitespace().map(|s| s.to_string()));
+            } else {
+                collecting_req = false;
+            }
         }
     }
-    flush(&mut pkgs, &mut name, &description, bytes);
+    flush(
+        &mut pkgs,
+        &mut name,
+        &description,
+        bytes,
+        &mut required_names,
+    );
+    resolve_required_by(&mut pkgs);
     pkgs.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.name.cmp(&b.name)));
     pkgs
+}
+
+fn resolve_required_by(pkgs: &mut [Package]) {
+    let catalog: std::collections::HashMap<String, (String, u64)> = pkgs
+        .iter()
+        .map(|p| (p.name.clone(), (p.description.clone(), p.bytes)))
+        .collect();
+    for pkg in pkgs.iter_mut() {
+        for dep in pkg.required_by.iter_mut() {
+            if let Some((desc, bytes)) = catalog.get(&dep.name) {
+                dep.description = desc.clone();
+                dep.bytes = *bytes;
+            }
+            dep.protected = is_protected_package(&dep.name);
+        }
+    }
 }
 
 fn installed_names() -> Result<HashSet<String>> {
@@ -300,6 +379,96 @@ fn collect_leftovers(packages: &[String], remaining: &HashSet<String>) -> Result
     Ok(leftovers)
 }
 
+fn pacman_qi(pkg: &str) -> Result<String> {
+    let out = Command::new("pacman")
+        .args(["-Qi", pkg])
+        .env("LC_ALL", "C")
+        .output()
+        .with_context(|| format!("pacman -Qi {pkg}"))?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "pacman -Qi {pkg}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn parse_required_by(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut collecting = false;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("Required By") {
+            let v = rest.trim_start_matches([' ', ':']).trim();
+            if v.eq_ignore_ascii_case("none") || v.is_empty() {
+                return Vec::new();
+            }
+            out.extend(v.split_whitespace().map(|s| s.to_string()));
+            collecting = true;
+            continue;
+        }
+        if collecting {
+            if line.starts_with(' ') || line.starts_with('\t') {
+                out.extend(line.split_whitespace().map(|s| s.to_string()));
+            } else {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Packages that still need `pkg` and are not themselves being removed.
+fn blockers_for(pkg: &str, removing: &HashSet<String>) -> Result<Vec<String>> {
+    let req = parse_required_by(&pacman_qi(pkg)?);
+    Ok(req
+        .into_iter()
+        .filter(|d| !removing.contains(d))
+        .collect())
+}
+
+fn qi_field(text: &str, key: &str) -> String {
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix(key) {
+            return rest
+                .split_once(':')
+                .map(|(_, v)| v.trim().to_string())
+                .unwrap_or_default();
+        }
+    }
+    String::new()
+}
+
+fn collect_required_by(pkg: &str, catalog: &[Package]) -> Result<Vec<ReverseDep>> {
+    let req = parse_required_by(&pacman_qi(pkg)?);
+    let mut out = Vec::new();
+    for name in req {
+        if name == pkg {
+            continue;
+        }
+        let protected = is_protected_package(&name);
+        let (description, bytes) = if let Some(p) = catalog.iter().find(|p| p.name == name) {
+            (p.description.clone(), p.bytes)
+        } else {
+            match pacman_qi(&name) {
+                Ok(text) => (
+                    qi_field(&text, "Description"),
+                    parse_pacman_size(&qi_field(&text, "Installed Size")),
+                ),
+                Err(_) => (String::new(), 0),
+            }
+        };
+        out.push(ReverseDep {
+            name,
+            description,
+            bytes,
+            protected,
+        });
+    }
+    out.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.name.cmp(&b.name)));
+    Ok(out)
+}
+
 fn pacman_print(packages: &[String]) -> Result<Vec<String>> {
     let mut cmd = Command::new("pacman");
     cmd.args(["-Rs", "--print", "--print-format", "%n"])
@@ -326,10 +495,19 @@ fn pacman_remove(packages: &[String]) -> Result<()> {
         c.args(["pacman", "-Rns", "--noconfirm"]);
         c
     };
+    cmd.env("LC_ALL", "C");
     cmd.args(packages);
-    let status = cmd.status().context("run privileged pacman -Rns")?;
-    if !status.success() {
-        anyhow::bail!("pacman -Rns failed with {status}");
+    let out = cmd.output().context("run privileged pacman -Rns")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        anyhow::bail!(
+            "{}",
+            if err.is_empty() {
+                format!("pacman -Rns failed with {}", out.status)
+            } else {
+                err
+            }
+        );
     }
     Ok(())
 }
@@ -354,7 +532,7 @@ fn pick_packages(pkgs: &mut [Package]) -> Result<bool> {
     Ok(ok)
 }
 
-pub fn run(dry_run: bool, yes: bool, json: bool, names: &[String]) -> Result<()> {
+pub fn run(dry_run: bool, yes: bool, json: bool, names: &[String], leftover_paths: &[String]) -> Result<()> {
     if !util::command_exists("pacman") {
         anyhow::bail!("pacman not found; uninstall is Arch-only");
     }
@@ -378,16 +556,20 @@ pub fn run(dry_run: bool, yes: bool, json: bool, names: &[String]) -> Result<()>
                     description: String::new(),
                     bytes: 0,
                     selected: true,
+                    required_by: Vec::new(),
                 });
             }
         }
     } else if json && dry_run {
+        let names: Vec<String> = pkgs.iter().map(|p| p.name.clone()).collect();
+        let leftovers = collect_leftovers(&names, &installed).unwrap_or_default();
         println!(
             "{}",
             serde_json::to_string_pretty(&UninstallReport {
                 dry_run: true,
                 packages: pkgs,
-                leftovers: Vec::new(),
+                leftovers,
+                required_by: Vec::new(),
                 pacman_targets: Vec::new(),
                 freed_bytes: 0,
             })?
@@ -423,7 +605,12 @@ pub fn run(dry_run: bool, yes: bool, json: bool, names: &[String]) -> Result<()>
 
     let selected_names: Vec<String> = selected.iter().map(|p| p.name.clone()).collect();
     let leftovers = collect_leftovers(&selected_names, &installed)?;
-    let leftover_bytes: u64 = leftovers.iter().map(|l| l.bytes).sum();
+    let want: HashSet<String> = leftover_paths.iter().cloned().collect();
+    let leftover_bytes: u64 = leftovers
+        .iter()
+        .filter(|l| want.contains(&l.path))
+        .map(|l| l.bytes)
+        .sum();
     let pkg_bytes: u64 = selected.iter().map(|p| p.bytes).sum();
     let print_targets = match pacman_print(&selected_names) {
         Ok(t) => t,
@@ -434,10 +621,16 @@ pub fn run(dry_run: bool, yes: bool, json: bool, names: &[String]) -> Result<()>
     };
 
     if json && dry_run {
+        let required_by = if selected_names.len() == 1 {
+            collect_required_by(&selected_names[0], &pkgs).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let report = UninstallReport {
             dry_run: true,
             packages: selected,
             leftovers,
+            required_by,
             pacman_targets: print_targets,
             freed_bytes: pkg_bytes + leftover_bytes,
         };
@@ -462,10 +655,11 @@ pub fn run(dry_run: bool, yes: bool, json: bool, names: &[String]) -> Result<()>
         );
     }
     if !leftovers.is_empty() {
-        println!("\nLeftover user data:");
+        println!("\nLeftover user data (kept unless --leftover PATH):");
         for l in &leftovers {
+            let mark = if want.contains(&l.path) { "●" } else { "○" };
             println!(
-                "  ● {:<28} {:>10}  {}",
+                "  {mark} {:<28} {:>10}  {}",
                 l.package,
                 util::format_bytes(l.bytes),
                 l.path
@@ -490,14 +684,31 @@ pub fn run(dry_run: bool, yes: bool, json: bool, names: &[String]) -> Result<()>
         return Ok(());
     }
 
-    if !yes
-        && !util::confirm(&format!(
-            "Uninstall {} package(s) and delete leftover data?",
-            selected.len()
-        ))?
-    {
-        println!("Aborted.");
-        return Ok(());
+    if !yes {
+        let confirm = if want.is_empty() {
+            format!(
+                "Uninstall {} package(s)? Leftover user dirs will be kept.",
+                selected.len()
+            )
+        } else {
+            format!(
+                "Uninstall {} package(s) and delete {} leftover dir(s)?",
+                selected.len(),
+                want.len()
+            )
+        };
+        if !util::confirm(&confirm)? {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    let removing: HashSet<String> = selected_names.iter().cloned().collect();
+    for name in &selected_names {
+        let blockers = blockers_for(name, &removing)?;
+        if !blockers.is_empty() {
+            anyhow::bail!("blocked\t{name}\t{}", blockers.join(", "));
+        }
     }
 
     pacman_remove(&selected_names)?;
@@ -506,6 +717,9 @@ pub fn run(dry_run: bool, yes: bool, json: bool, names: &[String]) -> Result<()>
     let mut freed = pkg_bytes;
     let mut removed_left = 0usize;
     for l in &leftovers {
+        if !want.contains(&l.path) {
+            continue;
+        }
         match util::remove_path(Path::new(&l.path)) {
             Ok(()) => {
                 freed += l.bytes;
@@ -516,12 +730,24 @@ pub fn run(dry_run: bool, yes: bool, json: bool, names: &[String]) -> Result<()>
         }
     }
 
-    println!(
-        "\nUninstall complete\nRemoved {} package(s), {removed_left} leftover(s), {}",
-        selected.len(),
-        util::format_bytes(freed)
-    );
     history::log_operation("uninstall", false, freed, selected.len(), "apply")?;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "event": "done",
+                "packages": selected.len(),
+                "leftovers": removed_left,
+                "freed_bytes": freed,
+            })
+        );
+    } else {
+        println!(
+            "\nUninstall complete\nRemoved {} package(s), {removed_left} leftover(s), {}",
+            selected.len(),
+            util::format_bytes(freed)
+        );
+    }
     Ok(())
 }
 

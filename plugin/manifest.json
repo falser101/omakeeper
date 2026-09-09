@@ -6,9 +6,17 @@
   "author": "falser",
   "license": "MIT",
   "description": "Omarchy system maintenance window — clean, software, optimize, disk map, and live status",
-  "kinds": ["overlay"],
+  "kinds": ["overlay", "bar-widget"],
   "keepLoaded": false,
   "entryPoints": {
-    "overlay": "Overlay.qml"
+    "overlay": "Overlay.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Omakeeper",
+    "description": "Open Omakeeper from the bar",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }
