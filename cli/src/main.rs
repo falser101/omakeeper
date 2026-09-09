@@ -1,4 +1,5 @@
 mod analyze;
+mod autostart;
 mod clean;
 mod etch;
 mod history;
@@ -128,6 +129,21 @@ enum Commands {
         #[arg(long, default_value = "random")]
         effect: String,
     },
+    /// List and toggle XDG login autostart apps
+    Autostart {
+        /// Enable this autostart id (filename without .desktop)
+        #[arg(long)]
+        enable: Option<String>,
+        /// Disable this autostart id
+        #[arg(long)]
+        disable: Option<String>,
+        /// Add an installed app (desktop id) to autostart
+        #[arg(long)]
+        add: Option<String>,
+        /// Remove a user-added autostart entry
+        #[arg(long)]
+        remove: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -193,6 +209,18 @@ fn main() -> Result<()> {
         }
         Some(Commands::Trash { paths }) => trash_paths(&paths, cli.json),
         Some(Commands::Etch { effect }) => etch::run(Some(effect.as_str())),
+        Some(Commands::Autostart {
+            enable,
+            disable,
+            add,
+            remove,
+        }) => autostart::run(
+            cli.json,
+            enable.as_deref(),
+            disable.as_deref(),
+            add.as_deref(),
+            remove.as_deref(),
+        ),
     }
 }
 

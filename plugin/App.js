@@ -1,6 +1,11 @@
 // Shared lockup for every tab's content hero (not idle splash / marquee).
 var CONTENT_MARK_SCALE = 0.56
 
+function landingHeroY(parentH, heroH, minTop) {
+  minTop = minTop || 24
+  return Math.max(minTop, (Number(parentH || 0) - Number(heroH || 0)) / 2)
+}
+
 function formatBytes(n) {
   n = Number(n || 0)
   if (n < 1024) return n + " B"

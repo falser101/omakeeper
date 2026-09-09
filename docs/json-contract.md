@@ -133,6 +133,41 @@ Apply (`omakeeper uninstall --yes [--leftover PATH]… PACKAGES…`) only delete
 }
 ```
 
+## `omakeeper autostart --json`
+
+Merged XDG login autostart (`/etc/xdg/autostart` + `~/.config/autostart`). User `Hidden=true` stubs disable a system entry without deleting it.
+
+```json
+{
+  "items": [
+    {
+      "id": "print-applet",
+      "name": "Print Queue Applet",
+      "description": "",
+      "exec": "system-config-printer-applet",
+      "icon": "printer",
+      "enabled": false,
+      "source": "system",
+      "path": "/home/me/.config/autostart/print-applet.desktop",
+      "user_added": false,
+      "locked": false
+    }
+  ],
+  "available": [
+    { "id": "firefox", "name": "Firefox", "description": "Web Browser", "icon": "firefox" }
+  ]
+}
+```
+
+Mutations (all reprint the same JSON when `--json` is set):
+
+- `omakeeper autostart --enable ID`
+- `omakeeper autostart --disable ID`
+- `omakeeper autostart --add DESKTOP-ID` — copy from `applications/`
+- `omakeeper autostart --remove ID` — drop a user-added entry, or mask a system one
+
+Takes effect on the next login (UWSM/XDG autostart). Session-required entries (`gnome-keyring`, `xdg-user-dirs`, …) are `locked`.
+
 ## `omakeeper history --json`
 
 Array of log entries (`ts`, `command`, `dry_run`, `freed_bytes`, `items`, `detail`).

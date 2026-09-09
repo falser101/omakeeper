@@ -65,6 +65,8 @@ Item {
   property real softFreed: 0
   property int softPkgs: 0
   property int softFiles: 0
+  property var autostartItems: []
+  property var autostartAvailable: []
   property var analyzeReport: ({ path: "", entries: [], total_size: 0, overview: true })
   property var analyzeCrumbs: []
   property var statusSnap: ({})
@@ -490,6 +492,10 @@ Item {
       } else if (kind === "history" && data) {
         root.historyTotals = App.historyTotals(data)
         root.dataRev += 1
+      } else if (kind.indexOf("autostart") === 0 && data) {
+        root.autostartItems = data.items || []
+        root.autostartAvailable = data.available || []
+        root.dataRev += 1
       } else if (kind === "trash") {
         var last = root.analyzeCrumbs.length ? root.analyzeCrumbs[root.analyzeCrumbs.length - 1].path : ""
         cli.scanAnalyze(last)
@@ -547,29 +553,6 @@ Item {
       color: "transparent"
       borderSpec: root.borderSpec
       padding: Style.spacing.panelPadding
-
-      PixelField {
-        id: edgeField
-        anchors.fill: parent
-        z: 0
-        fillHost: true
-        showMark: false
-        showCaption: false
-        drawField: true
-        interactive: false
-        etch: false
-        stamps: false
-        mood: {
-          if (root.tab === 0 && cli.busy && cli.kind === "clean-scan")
-            return "busy"
-          if (root.tab === 1 && cli.busy && cli.kind === "uninstall-scan" && !root.packages.length)
-            return "busy"
-          return "idle"
-        }
-        accent: root.accent
-        urgent: root.urgent
-        foreground: root.foreground
-      }
 
       Item {
         id: keyCatcher
@@ -659,6 +642,7 @@ Item {
           CleanView {
             anchors.fill: parent
             visible: root.tab === 0
+            enabled: root.opened && root.tab === 0
             items: root.cleanItems
             selected: root.cleanSelected
             revision: root.dataRev
@@ -699,6 +683,7 @@ Item {
           SoftwareView {
             anchors.fill: parent
             visible: root.tab === 1
+            enabled: root.opened && root.tab === 1
             packages: root.packages
             selected: root.pkgSelected
             leftovers: root.pkgLeftovers
@@ -720,7 +705,13 @@ Item {
             onTogglePkg: function(name) { root.togglePkg(name) }
             onToggleLeftover: function(path) { root.toggleLeftover(path) }
             onExpandPkg: function(name) { root.expandPkg(name) }
+            autostartItems: root.autostartItems
+            autostartAvailable: root.autostartAvailable
             onQueryChangedByUser: function(v) { root.pkgQuery = v; root.dataRev += 1 }
+            onAutostartScanRequested: cli.scanAutostart()
+            onAutostartSet: function(id, on) { cli.setAutostart(id, on) }
+            onAutostartAdd: function(id) { cli.addAutostart(id) }
+            onAutostartRemove: function(id) { cli.removeAutostart(id) }
             uiLang: root.uiLang
             selectedBg: root.selectedBg
             accent: root.accent
@@ -755,6 +746,7 @@ Item {
           OptimizeView {
             anchors.fill: parent
             visible: root.tab === 2
+            enabled: root.opened && root.tab === 2
             tasks: root.optimizeTasks
             selected: root.optimizeSelected
             logLines: root.optimizeLog
@@ -775,6 +767,7 @@ Item {
           AnalyzeView {
             anchors.fill: parent
             visible: root.tab === 3
+            enabled: root.opened && root.tab === 3
             report: root.analyzeReport
             crumbs: root.analyzeCrumbs
             revision: root.dataRev
@@ -793,6 +786,7 @@ Item {
           StatusView {
             anchors.fill: parent
             visible: root.tab === 4
+            enabled: root.opened && root.tab === 4
             snap: root.statusSnap
             revision: root.dataRev
             foreground: root.foreground
@@ -806,6 +800,7 @@ Item {
           SettingsView {
             anchors.fill: parent
             visible: root.tab === 5
+            enabled: root.opened && root.tab === 5
             uiLang: root.uiLang
             langPref: root.langPref
             appearancePref: root.appearancePref

@@ -20,7 +20,6 @@ Item {
   property color urgent: Color.urgent
   property color pageBg: Color.menu.background
 
-  // Opaque enough that the edge pixel-field cannot punch through labels.
   function cardFill(hover, header) {
     var t = hover ? (header ? 0.14 : 0.11) : (header ? 0.09 : 0.07)
     var bg = root.pageBg
@@ -58,6 +57,23 @@ Item {
   readonly property bool idle: !root.scanning && !root.applying && !root.items.length && root.phase !== "done" && root.phase !== "applying"
   readonly property bool stageApply: root.applying || root.phase === "applying"
   readonly property bool stageDone: root.phase === "done" && !root.applying
+  property bool playSweep: false
+  property bool sweepDone: false
+  readonly property bool holdLanding: root.idle || root.scanning || root.playSweep
+
+  function beginScan() {
+    root.sweepDone = false
+    root.playSweep = true
+    hero.restartSweep()
+    root.scanRequested()
+  }
+
+  onScanningChanged: {
+    if (root.scanning)
+      root.playSweep = true
+    else if (root.sweepDone)
+      root.playSweep = false
+  }
   readonly property var rows: {
     var _ = root.revision
     return App.groupCleanRows(root.items, root.expanded)
@@ -85,47 +101,69 @@ Item {
     visible: !root.stageApply && !root.stageDone
     anchors.horizontalCenter: parent.horizontalCenter
     width: parent.width
-    y: (root.idle || root.scanning)
-      ? Math.max(Style.space(24), (footer.y - implicitHeight) / 2)
+    y: root.holdLanding
+      ? App.landingHeroY(parent.height, implicitHeight, Style.space(24))
       : Style.space(12)
-    mood: root.scanning ? "busy" : "idle"
+    mood: "idle"
     drawField: false
-    etch: root.idle
+    etch: root.idle && !root.playSweep
     stamps: false
-    interactive: true
-    markScale: (root.items.length && !root.scanning) ? App.CONTENT_MARK_SCALE : 1.0
+    sweep: root.playSweep
+    interactive: !root.playSweep
+    animateMark: !root.holdLanding
+    showCaption: !root.holdLanding
+    markScale: (root.items.length && !root.holdLanding) ? App.CONTENT_MARK_SCALE : 1.0
     Behavior on y {
+      enabled: !root.holdLanding
       NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
     }
-    creatureSize: root.idle
+    creatureSize: root.holdLanding
       ? Math.min(Style.space(220), parent.width * 0.22)
       : Style.space(96)
     headline: {
-      if (root.scanning) return tr("clean.scanning")
+      if (root.scanning) return ""
       if (root.applying) return tr("clean.applying")
       if (root.phase === "done" && root.idle) return App.formatBytes(root.freedNow)
       if (root.items.length && root.count) return App.formatBytes(root.bytes)
       if (root.items.length) return App.formatBytes(App.allBytes(root.items))
-      return tr("clean.ready")
+      return ""
     }
     subline: {
-      if (root.scanning) return tr("clean.scanningHint")
+      if (root.scanning) return ""
       if (root.applying) return tr("clean.applyingHint")
       if (root.phase === "done" && root.idle) return tr("clean.doneHint", { bytes: App.formatBytes(root.totals.cleaned) })
       if (root.items.length)
         return tr("clean.reviewHint", { count: root.count, total: root.items.length })
-      return tr("clean.scanHint")
+      return ""
     }
     foreground: root.foreground
     fontFamily: root.fontFamily
     uiLang: root.uiLang
     accent: root.accent
     urgent: root.urgent
+    onSweepCycled: {
+      root.sweepDone = true
+      if (!root.scanning)
+        root.playSweep = false
+    }
+  }
+
+  Button {
+    id: scanBtn
+    z: 5
+    visible: root.holdLanding && !root.stageApply && !root.stageDone
+    anchors.horizontalCenter: hero.horizontalCenter
+    anchors.top: hero.bottom
+    anchors.topMargin: Style.space(32)
+    text: (root.scanning || root.playSweep) ? tr("clean.scanningBtn") : tr("clean.scan")
+    enabled: !root.scanning && !root.playSweep && !root.applying
+    selected: true
+    onClicked: root.beginScan()
   }
 
   ListView {
     id: list
-    visible: root.items.length > 0 && !root.stageApply && !root.stageDone
+    visible: root.items.length > 0 && !root.holdLanding && !root.stageApply && !root.stageDone
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: hero.bottom
@@ -383,6 +421,7 @@ Item {
 
   Item {
     visible: root.stageApply
+    enabled: root.stageApply
     anchors.fill: parent
 
     PixelField {
@@ -462,6 +501,7 @@ Item {
 
   Item {
     visible: root.stageDone
+    enabled: root.stageDone
     anchors.fill: parent
 
     PixelField {
@@ -499,20 +539,10 @@ Item {
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.bottom: parent.bottom
-    height: Style.space(44)
-
-    Button {
-      visible: root.idle || root.scanning
-      anchors.horizontalCenter: parent.horizontalCenter
-      anchors.verticalCenter: parent.verticalCenter
-      text: root.scanning ? tr("clean.scanningBtn") : tr("clean.scan")
-      enabled: !root.scanning && !root.applying
-      selected: true
-      onClicked: root.scanRequested()
-    }
+    height: root.holdLanding ? 0 : Style.space(44)
 
     Row {
-      visible: root.items.length > 0 && !root.scanning
+      visible: root.items.length > 0 && !root.holdLanding
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.spacing.md
@@ -569,13 +599,13 @@ Item {
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
           enabled: !root.applying
-          onClicked: root.scanRequested()
+          onClicked: root.beginScan()
         }
       }
     }
 
     Button {
-      visible: root.items.length > 0 && !root.scanning
+      visible: root.items.length > 0 && !root.holdLanding
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       text: root.applying ? tr("clean.applyingBtn") : tr("clean.apply", { bytes: App.formatBytes(root.bytes) })

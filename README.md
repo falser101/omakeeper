@@ -17,6 +17,7 @@ Inspired by the workflow of [Mole](https://github.com/tw93/Mole), rebuilt for Ar
 | `omakeeper history` | ✅ |
 | `omakeeper whitelist` | ✅ |
 | `omakeeper uninstall` | ✅ pacman -Rns; leftover user dirs are opt-in via `--leftover PATH` (denylist for core packages) |
+| `omakeeper autostart` | ✅ list / enable / disable / add XDG login apps (`~/.config/autostart`) |
 | `omakeeper optimize` | ✅ journal vacuum, font/icon/MIME caches, DNS flush, tmpfiles, flatpak repair |
 | Omarchy overlay | ✅ five-tab app (清理 / 软件 / 优化 / 分析 / 状态), no terminal hop |
 
@@ -89,6 +90,9 @@ omakeeper analyze --json ~
 omakeeper status              # one-shot dashboard
 omakeeper status --watch      # live refresh
 omakeeper status --json
+omakeeper autostart --json
+omakeeper autostart --disable print-applet
+omakeeper autostart --add firefox
 omakeeper history
 omakeeper whitelist add ~/.cache/something-to-keep
 omakeeper clean --dry-run --json

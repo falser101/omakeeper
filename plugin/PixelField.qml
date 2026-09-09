@@ -23,20 +23,54 @@ Item {
   // 1 = hero width (idle). After scan, callers drop this so the mark
   // stays proportional but cedes space to the list.
   property real markScale: 1.0
-  // Full-window edge field (homepage four-side dither). No music.
+  // fillHost stretches the wordmark stage (apply/done marquee).
   property bool fillHost: false
   property bool showMark: true
-  property bool drawField: true
+  property bool drawField: false
   property bool marquee: false
   property real marqueePhase: 0
   // Etch only on the idle clean landing. Stamps (click / auto OMA mark) off.
   property bool etch: false
   property bool stamps: false
+  // Full-window edge fields stay static; only wordmarks/marquees animate.
+  property bool animate: true
+  // Hover-like highlight sweeping left to right across the wordmark.
+  property bool sweep: false
+  property real sweepPhase: 0
 
   readonly property bool busy: root.mood === "busy" || root.spinning
   readonly property bool celebrating: root.mood === "celebrate"
+  // Overlay sets enabled=false when closed/hidden; do not read Window.window
+  // (it can retrigger paints every frame on FloatingWindow).
+  readonly property real spriteGoal: {
+    if (root.sweep || root.etching) return 0
+    if (root.busy) return 0.62
+    if (root.stamps) return 0.28
+    return 0
+  }
+  readonly property bool needsMotion: {
+    if (!root.animate)
+      return false
+    if (root.sweep)
+      return true
+    if (root.busy || root.marquee)
+      return true
+    if (root.holding)
+      return true
+    if (root.pings && root.pings.length)
+      return true
+    if (root.stamps && !root.etching)
+      return true
+    if (root.targetStrength > 0.01 || root.strength > 0.01)
+      return true
+    if (Math.abs(root.spriteStrength - root.spriteGoal) > 0.012 || root.spriteStrength > 0.01)
+      return true
+    return false
+  }
+  readonly property bool ticking: root.visible && root.enabled && root.needsMotion
 
   signal petted()
+  signal sweepCycled()
 
   readonly property color fieldBg: Color.menu.background
   readonly property color fieldDim: mixColor(Color.menu.background, root.accent, 0.42)
@@ -52,13 +86,16 @@ Item {
   readonly property real wmCW: Math.max(2, root.slotW / F.WORD_W)
   readonly property real wmCH: root.wmCW * 50 / 51
   readonly property real wordH: root.wmCH * F.WORD_H
-  readonly property real fieldH: root.wordH * (root.markScale >= 0.9 ? 1.45 : 1.22)
+  readonly property real fieldH: root.wordH
 
+  property bool animateMark: true
   Behavior on markScale {
+    enabled: root.animateMark
     NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
   }
 
-  implicitHeight: stage.height + (root.showCaption ? Style.space(72) : 0)
+  implicitWidth: root.fillHost ? 0 : Math.ceil(F.WORD_W * root.wmCW)
+  implicitHeight: root.fillHost ? 0 : (stage.height + (root.showCaption ? Style.space(72) : 0))
 
   property var noise: []
   property var jitter: []
@@ -133,11 +170,26 @@ Item {
   }
 
   function startEtch() {
-    if (!root.etch || root.marquee || !root.showMark || !root.visible || etchProc.running)
+    if (!root.etch || root.marquee || !root.showMark || !root.visible || !root.enabled || etchProc.running)
       return
     root.etchCells = []
     root.etching = true
     etchProc.running = true
+  }
+
+  property bool paintPending: false
+
+  function requestDraw() {
+    if (root.paintPending)
+      return
+    if (!root.visible || !root.enabled)
+      return
+    root.paintPending = true
+    Qt.callLater(function() {
+      root.paintPending = false
+      if (root.visible && root.enabled)
+        canvas.requestPaint()
+    })
   }
 
   Component.onCompleted: {
@@ -150,18 +202,55 @@ Item {
     }
     root.jitter = tile
     root.t0 = Date.now()
-    if (root.visible && root.etch)
+    if (root.visible && root.enabled && root.etch)
       Qt.callLater(root.startEtch)
+    Qt.callLater(root.requestDraw)
   }
 
   onVisibleChanged: {
-    if (root.visible && root.etch && !root.etchedOnce)
+    if (root.visible && root.enabled && root.etch && !root.etchedOnce)
       root.startEtch()
     if (!root.visible && etchProc.running)
       etchProc.running = false
+    if (root.visible)
+      root.requestDraw()
   }
 
-  onMarkScaleChanged: canvas.requestPaint()
+  onEnabledChanged: {
+    if (!root.enabled && etchProc.running)
+      etchProc.running = false
+    if (root.enabled)
+      root.requestDraw()
+  }
+
+  onTickingChanged: {
+    if (!root.ticking) {
+      root.strength = root.targetStrength
+      root.spriteStrength = root.spriteGoal
+    }
+  }
+
+  onMarkScaleChanged: root.requestDraw()
+  onEtchCellsChanged: root.requestDraw()
+
+  function restartSweep() {
+    if (etchProc.running)
+      etchProc.running = false
+    root.etching = false
+    root.etchCells = []
+    root.sweepPhase = 0
+    root.targetStrength = 1
+    root.pointerY = stage.height / 2
+    root.pointerX = (stage.width - F.WORD_W * root.wmCW) / 2
+    root.sweep = true
+  }
+
+  onSweepChanged: {
+    if (root.sweep)
+      root.restartSweep()
+    else
+      root.targetStrength = 0
+  }
 
   Item {
     id: stage
@@ -188,15 +277,24 @@ Item {
 
         var w = canvas.width
         var h = canvas.height
-        var dpr = 1
         var wmCW = root.wmCW
         var wmCH = root.wmCH
         var wmX = (w - F.WORD_W * wmCW) / 2
         var wmY = (h - F.WORD_H * wmCH) / 2
-        var cMin = -Math.ceil(wmX / wmCW) - 1
-        var rMin = -Math.ceil(wmY / wmCH) - 1
-        var cols = Math.ceil((w - wmX) / wmCW) - cMin + 1
-        var rows = Math.ceil((h - wmY) / wmCH) - rMin + 1
+        var fieldCW = wmCW
+        var fieldCH = wmCH
+        var fieldX = wmX
+        var fieldY = wmY
+        if (root.fillHost && root.drawField && !root.showMark) {
+          fieldCW = Math.max(16, Math.round(Math.min(w, h) / 48))
+          fieldCH = fieldCW
+          fieldX = 0
+          fieldY = 0
+        }
+        var cMin = fieldX ? -Math.ceil(fieldX / fieldCW) - 1 : 0
+        var rMin = fieldY ? -Math.ceil(fieldY / fieldCH) - 1 : 0
+        var cols = Math.ceil((w - fieldX) / fieldCW) - cMin + 1
+        var rows = Math.ceil((h - fieldY) / fieldCH) - rMin + 1
         var now = Date.now()
         var t = ((now - root.t0) / 1000)
         if (root.busy)
@@ -205,13 +303,19 @@ Item {
           t *= 1.25
 
         var reachCells = root.busy ? 16 : 12
+        var cssBg = cssOf(root.fieldBg)
+        var cssDim = cssOf(root.fieldDim)
+        var cssMid = cssOf(root.fieldMid)
+        var cssLit = cssOf(root.fieldLit)
+        var cssHover = cssOf(root.fieldHover)
+        var cssCrest = cssOf(root.fieldCrest)
 
-        if (root.drawField)
-          ctx.fillStyle = cssOf(root.fieldBg)
-        else
-          ctx.clearRect(0, 0, w, h)
-        if (root.drawField)
+        if (root.drawField) {
+          ctx.fillStyle = cssBg
           ctx.fillRect(0, 0, w, h)
+        } else {
+          ctx.clearRect(0, 0, w, h)
+        }
 
         var glows = []
         if (root.strength > 0.01) {
@@ -268,6 +372,7 @@ Item {
           return amp
         }
 
+        var idleField = glows.length === 0 && stamps.length === 0
         var jitter = root.jitter
         var r, c, col, row, yTop, y, cellH, cy, xLeft, cx, shade, nx, ny, rr, lum
         var u, v, base, twinkle, glowAmount, g, dx, dy, dist, falloff, amount
@@ -275,25 +380,30 @@ Item {
 
         for (r = 0; root.drawField && r < rows; r++) {
           row = rMin + r
-          yTop = wmY + row * wmCH
+          yTop = fieldY + row * fieldCH
           y = Math.round(yTop)
-          cellH = Math.round(yTop + wmCH) - y
-          cy = yTop + wmCH / 2
+          cellH = Math.round(yTop + fieldCH) - y
+          cy = yTop + fieldCH / 2
           ny = (cy / h) * 2 - 1
           for (c = 0; c < cols; c++) {
             col = cMin + c
             if (root.showMark && F.lit(row, col) && !root.etching)
               continue
 
-            xLeft = wmX + col * wmCW
-            cx = xLeft + wmCW / 2
+            xLeft = fieldX + col * fieldCW
+            cx = xLeft + fieldCW / 2
             nx = (cx / w) * 2 - 1
-            rr = Math.sqrt(nx * nx + ny * ny * 0.82)
+            rr = nx * nx + ny * ny * 0.82
+            if (idleField && rr < 0.176)
+              continue
+            rr = Math.sqrt(rr)
             shade = Math.min(1, Math.max(0, (rr - 0.42) / 0.85))
             shade = shade * shade
             shade *= Math.min(1, Math.max(0.2, cy / 70))
             if (root.busy)
               shade = Math.min(1, shade * 1.28 + 0.08)
+            if (idleField && shade <= 0.002)
+              continue
 
             lum = 0
             if (shade > 0.002 && noise.length) {
@@ -326,10 +436,9 @@ Item {
               continue
 
             heat = Math.max(glowAmount, waveAmount)
-            ctx.fillStyle = heat > 0.34 ? cssOf(root.fieldLit)
-              : (heat > 0.1 ? cssOf(root.fieldMid) : cssOf(root.fieldDim))
+            ctx.fillStyle = heat > 0.34 ? cssLit : (heat > 0.1 ? cssMid : cssDim)
             x = Math.round(xLeft)
-            ctx.fillRect(x, y, Math.round(xLeft + wmCW) - x, cellH)
+            ctx.fillRect(x, y, Math.round(xLeft + fieldCW) - x, cellH)
           }
         }
 
@@ -373,8 +482,8 @@ Item {
                   }
                 }
                 var crest = Math.max(waveAmount, glowAmount)
-                ctx.fillStyle = crest > 0.45 ? cssOf(root.fieldCrest)
-                  : (crest > 0.12 ? cssOf(root.fieldHover) : root.restInk(row))
+                ctx.fillStyle = crest > 0.45 ? cssCrest
+                  : (crest > 0.12 ? cssHover : root.restInk(row))
                 x = Math.round(xLeft)
                 ctx.fillRect(x, y, Math.round(xLeft + wmCW) - x, cellH)
               }
@@ -508,24 +617,32 @@ Item {
   }
 
   Timer {
-    interval: 25
-    running: root.visible
+    interval: (root.busy || root.marquee || root.sweep) ? 50 : 80
+    running: root.ticking
     repeat: true
     onTriggered: {
       var now = Date.now()
       var ts = (now - root.t0) / 1000
-      var rx = 0.44 * (1 + 0.1 * Math.sin(ts * 0.11))
-      var ry = 0.38 * (1 + 0.1 * Math.sin(ts * 0.09 + 2))
-      root.spriteX = stage.width * (0.5 + rx * Math.sin(ts * 0.65))
-      root.spriteY = stage.height * (0.48 + ry * Math.sin(ts * 0.39 + 1.1))
-      var goal = 0
-      if (!root.etching) {
-        if (root.busy)
-          goal = 0.62
-        else if (root.stamps)
-          goal = 0.28
+      if (root.sweep) {
+        var prev = root.sweepPhase
+        root.sweepPhase = prev + 0.042
+        if (root.sweepPhase >= 1) {
+          root.sweepPhase -= 1
+          root.sweepCycled()
+        }
+        var markW = F.WORD_W * root.wmCW
+        var pad = root.wmCW * 6
+        var x0 = (stage.width - markW) / 2 - pad
+        root.pointerX = x0 + (markW + pad * 2) * root.sweepPhase
+        root.pointerY = stage.height / 2
+        root.targetStrength = 1
+      } else {
+        var rx = 0.44 * (1 + 0.1 * Math.sin(ts * 0.11))
+        var ry = 0.38 * (1 + 0.1 * Math.sin(ts * 0.09 + 2))
+        root.spriteX = stage.width * (0.5 + rx * Math.sin(ts * 0.65))
+        root.spriteY = stage.height * (0.48 + ry * Math.sin(ts * 0.39 + 1.1))
       }
-      root.spriteStrength += (goal - root.spriteStrength) * 0.08
+      root.spriteStrength += (root.spriteGoal - root.spriteStrength) * 0.08
       root.strength += (root.targetStrength - root.strength) * 0.3
 
       if (root.marquee)

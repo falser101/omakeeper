@@ -16,6 +16,13 @@ Item {
   property int revision: 0
   property string query: ""
   property string subtab: "remove"
+
+  onSubtabChanged: {
+    root.addingAutostart = false
+    root.autostartQuery = ""
+    if (root.subtab === "autostart")
+      root.autostartScanRequested()
+  }
   property bool scanning: false
   property bool applying: false
   property string phase: "idle" // idle | applying | done
@@ -32,10 +39,91 @@ Item {
   function tr(key, vars) { return I18n.t(key, vars, root.uiLang) }
   property var appLibrary: null
   property var desktopIndex: ({})
+  property var autostartItems: []
+  property var autostartAvailable: []
+  property bool addingAutostart: false
+  property string autostartQuery: ""
 
-  readonly property bool stageApply: root.applying || root.phase === "applying"
-  readonly property bool stageDone: root.phase === "done" && !root.applying
+  property bool removeSweep: false
+  property bool removeSweepDone: false
+  property var removedIcons: []
+  readonly property bool stageDone: root.phase === "done" && !root.applying && !root.removeSweep
+  readonly property bool stageApply: !root.stageDone && (root.applying || root.phase === "applying" || root.removeSweep)
   readonly property bool loading: root.scanning && root.packages.length === 0 && !root.stageApply && !root.stageDone
+  property bool playSweep: true
+  property bool sweepDone: false
+  readonly property bool holdLanding: (root.loading || root.playSweep) && !root.stageApply && !root.stageDone
+
+  function startIntro() {
+    if (root.stageApply || root.stageDone)
+      return
+    root.sweepDone = false
+    root.playSweep = true
+    Qt.callLater(function() {
+      if (hero)
+        hero.restartSweep()
+    })
+  }
+
+  function parkLanding() {
+    root.playSweep = true
+    root.sweepDone = false
+  }
+
+  onVisibleChanged: {
+    if (root.visible)
+      root.startIntro()
+    else
+      root.parkLanding()
+  }
+  onEnabledChanged: {
+    if (root.enabled && root.visible)
+      root.startIntro()
+    else
+      root.parkLanding()
+  }
+  onLoadingChanged: {
+    if (!root.loading && root.sweepDone)
+      root.playSweep = false
+  }
+  function snapshotRemovedIcons() {
+    var names = root.selectedNames || []
+    var out = []
+    for (var i = 0; i < names.length && out.length < 3; i++) {
+      var name = names[i]
+      var icon = App.iconNameForPackage(name, root.desktopIndex)
+      for (var j = 0; j < root.packages.length; j++) {
+        if (root.packages[j].name === name) {
+          if (root.packages[j].icon)
+            icon = root.packages[j].icon
+          break
+        }
+      }
+      out.push({ name: name, icon: icon || "" })
+    }
+    root.removedIcons = out
+  }
+
+  onApplyingChanged: {
+    if (root.applying) {
+      root.snapshotRemovedIcons()
+      root.removeSweepDone = false
+      root.removeSweep = true
+      Qt.callLater(function() {
+        if (removeHero)
+          removeHero.restartSweep()
+      })
+    } else if (root.removeSweepDone) {
+      root.removeSweep = false
+    }
+  }
+  onPhaseChanged: {
+    if (root.phase === "idle") {
+      root.removeSweep = false
+      root.removeSweepDone = false
+      root.removedIcons = []
+    }
+  }
 
   signal togglePkg(string name)
   signal toggleLeftover(string path)
@@ -43,6 +131,10 @@ Item {
   signal applyRequested()
   signal queryChangedByUser(string value)
   signal resetRequested()
+  signal autostartScanRequested()
+  signal autostartSet(string id, bool enabled)
+  signal autostartAdd(string id)
+  signal autostartRemove(string id)
 
   readonly property string homeDir: {
     try { return String(Quickshell.env("HOME") || "") } catch (e) { return "" }
@@ -163,19 +255,53 @@ Item {
     for (var c = 0; c < 26; c++) out.push(String.fromCharCode(65 + c))
     return out
   }
+  function peekTopIndex() {
+    var pkgs = root.visiblePkgs
+    if (!list || !pkgs.length) return -1
+    var y0 = list.contentY
+    var xs = [12, Math.max(12, list.width * 0.25)]
+    var ys = [1, 8, 18, 32, 52]
+    var i, j, idx
+    for (i = 0; i < xs.length; i++) {
+      for (j = 0; j < ys.length; j++) {
+        idx = list.indexAt(xs[i], y0 + ys[j])
+        if (idx >= 0 && idx < pkgs.length)
+          return idx
+      }
+    }
+    var kids = list.contentItem ? list.contentItem.children : []
+    var best = -1
+    var bestY = 1e9
+    for (i = 0; i < kids.length; i++) {
+      var it = kids[i]
+      if (!it || it === list.footerItem) continue
+      if (typeof it.index !== "number") continue
+      if (it.y + it.height <= y0 + 0.5) continue
+      if (it.y < bestY) {
+        bestY = it.y
+        best = it.index
+      }
+    }
+    if (best >= 0 && best < pkgs.length)
+      return best
+    return -1
+  }
+
   readonly property string topLetter: {
     var _ = list.contentY
+    var __ = list.moving
     var pkgs = root.visiblePkgs
     if (!pkgs.length) return ""
-    var idx = list.indexAt(8, list.contentY + 8)
-    if (idx < 0) idx = 0
-    if (idx >= pkgs.length) idx = pkgs.length - 1
+    var idx = root.peekTopIndex()
+    if (idx < 0) return root.selectedLetter
     return App.packageLetter(pkgs[idx].name)
   }
 
   onTopLetterChanged: {
     if (root.railLock || root.railDragging) return
-    root.setSelectedLetter(root.topLetter, root.thumbArmed)
+    if (!root.topLetter) return
+    var animate = root.thumbArmed && !list.moving && !list.flicking && !listJump.running
+    root.setSelectedLetter(root.topLetter, animate)
     root.thumbArmed = true
   }
 
@@ -225,31 +351,38 @@ Item {
     thumbTravel.start()
   }
 
+  function firstIndexForLetter(letter) {
+    var pkgs = root.visiblePkgs
+    if (!pkgs.length || !letter) return 0
+    var first = -1
+    var next = -1
+    for (var j = 0; j < pkgs.length; j++) {
+      var L = App.packageLetter(pkgs[j].name)
+      if (L === letter) {
+        if (first < 0) first = j
+      } else if (letter !== "#" && L !== "#" && L > letter) {
+        if (next < 0) next = j
+      }
+    }
+    if (first >= 0) return first
+    if (next >= 0) return next
+    return Math.max(0, pkgs.length - 1)
+  }
+
   function jumpToLetter(letter, instant) {
     var pkgs = root.visiblePkgs
     if (!pkgs.length || !letter) return
-    var i = -1
-    if (letter === "#") {
-      for (var h = 0; h < pkgs.length; h++) {
-        if (App.packageLetter(pkgs[h].name) === "#") { i = h; break }
-      }
-      if (i < 0) i = 0
-    } else {
-      for (var j = 0; j < pkgs.length; j++) {
-        var L = App.packageLetter(pkgs[j].name)
-        if (L === "#") continue
-        if (L >= letter) { i = j; break }
-      }
-      if (i < 0) i = pkgs.length - 1
-    }
+    var i = root.firstIndexForLetter(letter)
     if (instant) {
       listJump.stop()
+      list.forceLayout()
       list.positionViewAtIndex(i, ListView.Beginning)
       root.railLock = false
       return
     }
     list.cancelFlick()
     var from = list.contentY
+    list.forceLayout()
     list.positionViewAtIndex(i, ListView.Beginning)
     var to = list.contentY
     if (Math.abs(to - from) < 2) {
@@ -305,17 +438,39 @@ Item {
     return n
   }
 
+  readonly property var visibleAutostart: {
+    var _ = root.revision
+    var q = String(root.autostartQuery || "").toLowerCase()
+    var src = root.addingAutostart ? (root.autostartAvailable || []) : (root.autostartItems || [])
+    if (!q) return src
+    var out = []
+    for (var i = 0; i < src.length; i++) {
+      var hay = ((src[i].name || "") + " " + (src[i].description || "") + " " + (src[i].id || "")).toLowerCase()
+      if (hay.indexOf(q) >= 0) out.push(src[i])
+    }
+    return out
+  }
+
+  readonly property int autostartOnCount: {
+    var _ = root.revision
+    var n = 0
+    var items = root.autostartItems || []
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].enabled) n++
+    }
+    return n
+  }
+
   Row {
     id: subtabs
     z: 2
-    visible: !root.loading && !root.stageApply && !root.stageDone
+    visible: !root.holdLanding && !root.stageApply && !root.stageDone
     spacing: Style.spacing.sm
     y: 0
 
     Repeater {
       model: [
         { id: "remove", label: tr("soft.remove") },
-        { id: "updates", label: tr("soft.updates") },
         { id: "autostart", label: tr("soft.autostart") }
       ]
       delegate: Rectangle {
@@ -344,12 +499,19 @@ Item {
   TextField {
     id: search
     z: 2
-    visible: !root.loading && !root.stageApply && !root.stageDone
+    visible: !root.holdLanding && !root.stageApply && !root.stageDone
     anchors.right: parent.right
     width: Style.space(220)
-    placeholderText: tr("soft.search")
-    text: root.query
-    onTextEdited: root.queryChangedByUser(text)
+    placeholderText: root.subtab === "autostart"
+      ? (root.addingAutostart ? tr("soft.autostartPick") : tr("soft.searchAutostart"))
+      : tr("soft.search")
+    text: root.subtab === "autostart" ? root.autostartQuery : root.query
+    onTextEdited: {
+      if (root.subtab === "autostart")
+        root.autostartQuery = text
+      else
+        root.queryChangedByUser(text)
+    }
   }
 
   PixelField {
@@ -357,29 +519,38 @@ Item {
     visible: !root.stageApply && !root.stageDone
     anchors.horizontalCenter: parent.horizontalCenter
     width: parent.width
-    y: root.loading
-      ? Math.max(Style.space(24), (parent.height - implicitHeight) / 2)
+    y: root.holdLanding
+      ? App.landingHeroY(parent.height, implicitHeight, Style.space(24))
       : Style.space(12)
-    mood: (root.scanning || root.applying || root.loading) ? "busy" : "idle"
+    mood: "idle"
     drawField: false
-    markScale: root.loading ? 1.0 : App.CONTENT_MARK_SCALE
-    creatureSize: root.loading
+    sweep: root.playSweep
+    interactive: !root.playSweep
+    animateMark: !root.holdLanding
+    markScale: root.holdLanding ? 1.0 : App.CONTENT_MARK_SCALE
+    creatureSize: root.holdLanding
       ? Math.min(Style.space(220), parent.width * 0.22)
       : Style.space(96)
-    showCaption: root.loading
-    headline: root.loading ? tr("soft.loading") : ""
-    subline: root.loading ? tr("soft.loadingHint") : ""
+    showCaption: false
+    headline: ""
+    subline: ""
     uiLang: root.uiLang
     accent: root.accent
     urgent: root.urgent
     Behavior on y {
+      enabled: !root.holdLanding
       NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+    }
+    onSweepCycled: {
+      root.sweepDone = true
+      if (!root.loading)
+        root.playSweep = false
     }
   }
 
   ListView {
     id: list
-    visible: !root.loading && root.subtab === "remove" && !root.stageApply && !root.stageDone
+    visible: !root.holdLanding && root.subtab === "remove" && !root.stageApply && !root.stageDone
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.rightMargin: visible && root.visiblePkgs.length ? Style.space(32) : 0
@@ -391,12 +562,23 @@ Item {
     spacing: Style.spacing.sm
     model: root.visiblePkgs
     boundsBehavior: Flickable.StopAtBounds
+    footer: Item {
+      width: list.width
+      height: Math.max(0, list.height - Style.space(56))
+    }
+    cacheBuffer: Math.max(256, list.height * 2)
     onMovementStarted: {
       if (listJump.running) listJump.stop()
       root.railLock = false
     }
+    onMovementEnded: {
+      if (root.railLock || root.railDragging) return
+      if (root.topLetter)
+        root.setSelectedLetter(root.topLetter, false)
+    }
 
     delegate: Rectangle {
+      required property int index
       required property var modelData
       width: list.width
       height: body.implicitHeight + Style.spacing.md * 2
@@ -711,6 +893,136 @@ Item {
     }
   }
 
+  ListView {
+    id: autoList
+    visible: !root.holdLanding && root.subtab === "autostart" && !root.stageApply && !root.stageDone
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: hero.bottom
+    anchors.topMargin: Style.spacing.lg
+    anchors.bottom: autoFooter.top
+    anchors.bottomMargin: Style.spacing.md
+    clip: true
+    spacing: Style.spacing.sm
+    model: root.visibleAutostart
+    boundsBehavior: Flickable.StopAtBounds
+
+    delegate: Rectangle {
+      required property var modelData
+      width: autoList.width
+      height: Style.space(56)
+      radius: Math.max(Style.cornerRadius, Style.space(8))
+      color: root.cardFill(rowMouse.containsMouse, true)
+      opacity: modelData.locked ? 0.55 : 1
+
+      MouseArea {
+        id: rowMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        enabled: !modelData.locked || root.addingAutostart
+        onClicked: {
+          if (root.addingAutostart)
+            root.autostartAdd(modelData.id)
+          else if (!modelData.locked)
+            root.autostartSet(modelData.id, !modelData.enabled)
+        }
+      }
+
+      CheckGlyph {
+        id: autoBox
+        anchors.left: parent.left
+        anchors.leftMargin: Style.spacing.md
+        anchors.verticalCenter: parent.verticalCenter
+        checkState: (!root.addingAutostart && modelData.enabled) ? "all" : "none"
+        interactive: !modelData.locked && !root.addingAutostart
+        foreground: root.foreground
+        accent: root.accent
+        onClicked: {
+          if (!modelData.locked)
+            root.autostartSet(modelData.id, !modelData.enabled)
+        }
+      }
+
+      Item {
+        id: autoIcon
+        anchors.left: autoBox.right
+        anchors.leftMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(22)
+        height: Style.space(22)
+        AppIcon {
+          anchors.fill: parent
+          pixelSize: parent.width
+          iconName: modelData.icon || ""
+          fallbackText: modelData.name || modelData.id
+          appLibrary: root.appLibrary
+          foreground: root.foreground
+        }
+      }
+
+      Column {
+        anchors.left: autoIcon.right
+        anchors.leftMargin: Style.space(10)
+        anchors.right: autoTail.left
+        anchors.rightMargin: Style.spacing.sm
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: 2
+        Text {
+          width: parent.width
+          text: modelData.name || modelData.id
+          elide: Text.ElideRight
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+        }
+        Text {
+          width: parent.width
+          text: {
+            if (root.addingAutostart)
+              return modelData.description || ""
+            if (modelData.locked)
+              return tr("soft.autostartLocked")
+            if (modelData.enabled)
+              return tr("soft.autostartOn") + "  ·  " + (modelData.user_added ? tr("soft.autostartUser") : tr("soft.autostartSystem"))
+            return tr("soft.autostartOff")
+          }
+          elide: Text.ElideRight
+          color: root.foreground
+          opacity: 0.5
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      Text {
+        id: autoTail
+        visible: !root.addingAutostart && !!modelData.user_added
+        anchors.right: parent.right
+        anchors.rightMargin: Style.spacing.md
+        anchors.verticalCenter: parent.verticalCenter
+        text: tr("soft.autostartRemove")
+        color: root.urgent
+        opacity: 0.8
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        MouseArea {
+          anchors.fill: parent
+          anchors.margins: -6
+          onClicked: root.autostartRemove(modelData.id)
+        }
+      }
+    }
+  }
+
+  Text {
+    visible: autoList.visible && root.visibleAutostart.length === 0
+    anchors.centerIn: parent
+    text: root.addingAutostart ? tr("soft.autostartPick") : tr("soft.autostartEmpty")
+    color: root.foreground
+    opacity: 0.5
+    font.family: root.fontFamily
+  }
+
   NumberAnimation {
     id: listJump
     target: list
@@ -842,7 +1154,7 @@ Item {
           return
         root.railLock = false
         if (root.topLetter)
-          root.setSelectedLetter(root.topLetter, true)
+          root.setSelectedLetter(root.topLetter, false)
       }
       onCanceled: {
         root.railDragging = false
@@ -852,33 +1164,35 @@ Item {
     }
   }
 
-  Text {
-    visible: !root.loading && root.subtab !== "remove" && !root.stageApply && !root.stageDone
-    anchors.centerIn: parent
-    text: root.subtab === "updates" ? tr("soft.updatesSoon") : tr("soft.autostartSoon")
-    color: root.foreground
-    opacity: 0.5
-    font.family: root.fontFamily
-  }
+
 
   Item {
     visible: root.stageApply
+    enabled: root.stageApply
     anchors.fill: parent
 
     PixelField {
-      anchors.fill: parent
-      fillHost: true
+      id: removeHero
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: parent.width
+      y: App.landingHeroY(parent.height, implicitHeight, Style.space(24))
       showMark: true
       drawField: false
-      marquee: true
-      mood: "busy"
-      markScale: 0.72
+      marquee: false
+      mood: "idle"
+      markScale: 1.0
       showCaption: false
       interactive: false
+      sweep: true
       accent: root.accent
       urgent: root.urgent
       foreground: root.foreground
       fontFamily: root.fontFamily
+      onSweepCycled: {
+        root.removeSweepDone = true
+        if (!root.applying)
+          root.removeSweep = false
+      }
     }
 
     Column {
@@ -887,6 +1201,22 @@ Item {
       anchors.bottomMargin: Style.space(48)
       width: parent.width
       spacing: 6
+      Row {
+        visible: root.removedIcons.length > 0
+        anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Style.spacing.md
+        Repeater {
+          model: root.removedIcons
+          AppIcon {
+            required property var modelData
+            pixelSize: Style.space(44)
+            iconName: modelData.icon || App.iconNameForPackage(modelData.name, root.desktopIndex)
+            fallbackText: modelData.name
+            appLibrary: root.appLibrary
+            foreground: root.foreground
+          }
+        }
+      }
       Text {
         width: parent.width
         text: App.formatBytes(root.freedNow)
@@ -910,6 +1240,7 @@ Item {
 
   Item {
     visible: root.stageDone
+    enabled: root.stageDone
     anchors.fill: parent
 
     PixelField {
@@ -937,6 +1268,22 @@ Item {
       width: parent.width
       spacing: Style.spacing.md
 
+      Row {
+        visible: root.removedIcons.length > 0
+        anchors.horizontalCenter: parent.horizontalCenter
+        spacing: Style.spacing.md
+        Repeater {
+          model: root.removedIcons
+          AppIcon {
+            required property var modelData
+            pixelSize: Style.space(48)
+            iconName: modelData.icon || App.iconNameForPackage(modelData.name, root.desktopIndex)
+            fallbackText: modelData.name
+            appLibrary: root.appLibrary
+            foreground: root.foreground
+          }
+        }
+      }
       Text {
         width: parent.width
         text: App.formatBytes(root.freedNow)
@@ -970,8 +1317,41 @@ Item {
   }
 
   Rectangle {
+    id: autoFooter
+    visible: !root.holdLanding && root.subtab === "autostart" && !root.stageApply && !root.stageDone
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    height: Style.space(48)
+    color: "transparent"
+
+    Text {
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      text: root.addingAutostart
+        ? tr("soft.autostartPick")
+        : (tr("soft.autostartEnabled", { n: root.autostartOnCount }) + "  ·  " + tr("soft.autostartHint"))
+      color: root.foreground
+      opacity: 0.7
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    Button {
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      text: root.addingAutostart ? tr("soft.autostartDone") : tr("soft.autostartAdd")
+      selected: true
+      onClicked: {
+        root.addingAutostart = !root.addingAutostart
+        root.autostartQuery = ""
+      }
+    }
+  }
+
+  Rectangle {
     id: footer
-    visible: !root.loading && root.subtab === "remove" && !root.stageApply && !root.stageDone
+    visible: !root.holdLanding && root.subtab === "remove" && !root.stageApply && !root.stageDone
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.bottom: parent.bottom

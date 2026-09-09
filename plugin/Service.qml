@@ -44,6 +44,16 @@ Item {
   }
   function scanStatus() { return run("status", ["status", "--json"]) }
   function scanHistory() { return run("history", ["history", "--json"]) }
+  function scanAutostart() { return run("autostart-scan", ["autostart", "--json"]) }
+  function setAutostart(id, on) {
+    return run("autostart-set", ["autostart", "--json", on ? "--enable" : "--disable", id])
+  }
+  function addAutostart(id) {
+    return run("autostart-add", ["autostart", "--json", "--add", id])
+  }
+  function removeAutostart(id) {
+    return run("autostart-remove", ["autostart", "--json", "--remove", id])
+  }
 
   function applyClean(ids) {
     var path = root.tmpDir + "/select.json"
