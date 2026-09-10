@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const OLD_DAYS: u64 = 90;
+#[allow(dead_code)]
 const LARGE_FILE_MIN: u64 = 100 * 1024 * 1024;
+#[allow(dead_code)]
 const LARGE_FILE_CAP: usize = 20;
 
 #[derive(Debug, Clone, Serialize)]
@@ -20,6 +22,7 @@ pub struct DiskEntry {
     pub path: String,
     pub size: u64,
     pub is_dir: bool,
+    pub protected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub age_days: Option<u64>,
 }
@@ -28,10 +31,15 @@ pub struct DiskEntry {
 struct AnalyzeReport {
     path: String,
     overview: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent: Option<String>,
     entries: Vec<DiskEntry>,
     large_files: Vec<DiskEntry>,
     total_size: u64,
     total_files: usize,
+    disk_used: u64,
+    disk_total: u64,
+    disk_free: u64,
 }
 
 #[derive(Clone)]
@@ -57,6 +65,32 @@ fn age_days(path: &Path) -> Option<u64> {
     let modified = path.metadata().ok()?.modified().ok()?;
     let now = SystemTime::now();
     Some(now.duration_since(modified).ok()?.as_secs() / 86400)
+}
+
+fn is_virtual_root(name: &str) -> bool {
+    matches!(name, "proc" | "sys" | "dev" | "run")
+}
+
+fn is_view_only(path: &Path) -> bool {
+    util::is_dangerous_delete(path)
+}
+
+fn entry_name(path: &Path) -> String {
+    path.file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+fn disk_entry(path: &Path, size: u64, is_dir: bool) -> DiskEntry {
+    DiskEntry {
+        name: entry_name(path),
+        path: path.display().to_string(),
+        size,
+        is_dir,
+        protected: is_view_only(path),
+        age_days: age_days(path),
+    }
 }
 
 fn overview_locations() -> Result<Vec<(String, Location)>> {
@@ -125,16 +159,46 @@ fn list_dir(path: &Path) -> Result<Vec<Row>> {
         .map(|(p, size)| {
             let is_dir = p.is_dir();
             Row {
-                entry: DiskEntry {
-                    name: p
-                        .file_name()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| p.display().to_string()),
-                    path: p.display().to_string(),
-                    size,
-                    is_dir,
-                    age_days: age_days(&p),
-                },
+                entry: disk_entry(&p, size, is_dir),
+                location: Location::Dir(p),
+            }
+        })
+        .collect();
+    rows.sort_by(|a, b| b.entry.size.cmp(&a.entry.size));
+    Ok(rows)
+}
+
+fn list_disk_root() -> Result<Vec<Row>> {
+    let root = PathBuf::from("/");
+    let home = util::home_dir()?;
+    let skip_home_mount = home.starts_with("/home");
+    let mut children: Vec<PathBuf> = std::fs::read_dir(&root)
+        .context("read /")?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if is_virtual_root(name) {
+                return false;
+            }
+            if skip_home_mount && name == "home" {
+                return false;
+            }
+            true
+        })
+        .collect();
+    if skip_home_mount && home.is_dir() {
+        children.push(home);
+    }
+    children.sort();
+    let sizes = util::path_sizes(&children);
+    let mut rows: Vec<Row> = children
+        .into_iter()
+        .zip(sizes)
+        .map(|(p, size)| {
+            let is_dir = p.is_dir();
+            Row {
+                entry: disk_entry(&p, size, is_dir),
                 location: Location::Dir(p),
             }
         })
@@ -150,16 +214,7 @@ fn list_old_downloads(root: &Path) -> Vec<Row> {
         .into_iter()
         .zip(sizes)
         .map(|(p, size)| Row {
-            entry: DiskEntry {
-                name: p
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| p.display().to_string()),
-                path: p.display().to_string(),
-                size,
-                is_dir: false,
-                age_days: age_days(&p),
-            },
+            entry: disk_entry(&p, size, false),
             location: Location::Dir(p),
         })
         .collect();
@@ -167,6 +222,7 @@ fn list_old_downloads(root: &Path) -> Vec<Row> {
     rows
 }
 
+#[allow(dead_code)]
 fn large_files_in(path: &Path) -> Vec<DiskEntry> {
     let mut files: Vec<DiskEntry> = walkdir::WalkDir::new(path)
         .follow_links(false)
@@ -179,13 +235,7 @@ fn large_files_in(path: &Path) -> Vec<DiskEntry> {
             if size < LARGE_FILE_MIN {
                 return None;
             }
-            Some(DiskEntry {
-                name: e.file_name().to_string_lossy().into_owned(),
-                path: e.path().display().to_string(),
-                size,
-                is_dir: false,
-                age_days: age_days(e.path()),
-            })
+            Some(disk_entry(e.path(), size, false))
         })
         .collect();
     files.sort_by(|a, b| b.size.cmp(&a.size));
@@ -216,9 +266,10 @@ fn overview_rows() -> Result<Vec<Row>> {
             Row {
                 entry: DiskEntry {
                     name,
-                    path,
+                    path: path.clone(),
                     size,
                     is_dir: true,
+                    protected: is_view_only(Path::new(&path)),
                     age_days: None,
                 },
                 location: loc,
@@ -228,29 +279,45 @@ fn overview_rows() -> Result<Vec<Row>> {
 }
 
 fn report_for(path: &Path, overview: bool) -> Result<AnalyzeReport> {
+    let is_disk = path == Path::new("/");
     let rows = if overview {
         overview_rows()?
+    } else if is_disk {
+        list_disk_root()?
     } else {
         list_dir(path)?
     };
     let entries: Vec<DiskEntry> = rows.into_iter().map(|r| r.entry).collect();
-    let total_size = if overview {
+    let stat = util::disk_stat(path).unwrap_or_default();
+    let total_size = if is_disk && stat.used > 0 {
+        stat.used
+    } else {
         entries.iter().map(|e| e.size).sum()
-    } else {
-        util::path_size(path)
     };
-    let large_files = if overview {
-        Vec::new()
+    let total_files = entries.len();
+    let parent = if is_disk {
+        None
     } else {
-        large_files_in(path)
+        path.parent().map(|p| {
+            if p.as_os_str().is_empty() {
+                "/".into()
+            } else {
+                p.display().to_string()
+            }
+        })
     };
+    let large_files = Vec::new();
     Ok(AnalyzeReport {
         path: path.display().to_string(),
         overview,
+        parent,
         entries,
         large_files,
         total_size,
-        total_files: 0,
+        total_files,
+        disk_used: stat.used,
+        disk_total: stat.total,
+        disk_free: stat.available,
     })
 }
 
@@ -279,7 +346,7 @@ fn trash_selected(screen: &mut Screen) -> Result<()> {
         .current_rows()
         .iter()
         .zip(screen.selected.iter())
-        .filter(|(_, on)| **on)
+        .filter(|(row, on)| **on && !row.entry.protected)
         .map(|(row, _)| {
             (
                 PathBuf::from(&row.entry.path),
@@ -515,7 +582,7 @@ pub fn run(path: Option<String>, json: bool) -> Result<()> {
     if json {
         let (report_path, overview) = match path {
             Some(p) => (util::expand_user(&p), false),
-            None => (util::home_dir()?, true),
+            None => (util::home_dir()?, false),
         };
         if !overview && !report_path.exists() {
             anyhow::bail!("path not found: {}", report_path.display());
@@ -552,5 +619,33 @@ mod tests {
     #[test]
     fn old_downloads_threshold() {
         assert_eq!(OLD_DAYS, 90);
+    }
+
+    #[test]
+    fn virtual_roots_are_skipped() {
+        assert!(is_virtual_root("proc"));
+        assert!(is_virtual_root("sys"));
+        assert!(is_virtual_root("dev"));
+        assert!(is_virtual_root("run"));
+        assert!(!is_virtual_root("usr"));
+        assert!(!is_virtual_root("home"));
+        assert!(!is_virtual_root("var"));
+    }
+
+    #[test]
+    fn system_paths_are_view_only() {
+        assert!(is_view_only(Path::new("/")));
+        assert!(is_view_only(Path::new("/usr")));
+        assert!(is_view_only(Path::new("/etc")));
+        assert!(is_view_only(Path::new("/boot")));
+        assert!(is_view_only(Path::new("/var/log")));
+    }
+
+    #[test]
+    fn home_children_are_not_view_only() {
+        let home = util::home_dir().expect("HOME");
+        let child = home.join("Downloads");
+        assert!(!is_view_only(&child));
+        assert!(is_view_only(&home));
     }
 }

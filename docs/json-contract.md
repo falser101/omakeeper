@@ -53,18 +53,22 @@ Array of installer files (`name`, `path`, `source`, `bytes`, `selected`). Intera
 
 ## `omakeeper analyze --json [PATH]`
 
-Without `PATH`, `overview` is true and `entries` are the home overview roots. With `PATH`, `entries` are that directory's children.
+Without `PATH`, lists `$HOME`. With `PATH`, lists that directory's children. `/` is the disk root: virtual mounts (`proc`, `sys`, `dev`, `run`) are skipped and `/home` is replaced by the current user home. System paths set `protected: true` (view-only; trash is refused).
 
 ```json
 {
   "path": "/home/me",
-  "overview": true,
+  "overview": false,
+  "parent": "/home",
   "entries": [
-    { "name": "Home", "path": "/home/me", "size": 80939438080, "is_dir": true }
+    { "name": "Projects", "path": "/home/me/Projects", "size": 80939438080, "is_dir": true, "protected": false }
   ],
   "large_files": [],
   "total_size": 80939438080,
-  "total_files": 0
+  "total_files": 42,
+  "disk_used": 509123456000,
+  "disk_total": 1000000000000,
+  "disk_free": 490876544000
 }
 ```
 

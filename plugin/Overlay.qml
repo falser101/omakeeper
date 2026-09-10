@@ -161,38 +161,39 @@ Item {
     if (i === 1 && !root.packages.length) cli.scanUninstall()
     if (i === 2 && !root.optimizeTasks.length) cli.scanOptimize()
     if (i === 3 && !(root.analyzeReport && root.analyzeReport.entries && root.analyzeReport.entries.length)) {
-      root.analyzeCrumbs = [{ name: root.tr("analyze.overview"), path: "" }]
-      cli.scanAnalyze("")
+      root.navigateAnalyze(root.analyzeHome())
     }
     if (i === 4) cli.scanStatus()
   }
 
+  function analyzeHome() {
+    return Quickshell.env("HOME") || "/"
+  }
+
   function crumbName(path) {
-    if (!path) return root.tr("analyze.overview")
+    if (!path || path === "/") return root.tr("analyze.disk")
     var parts = String(path).split("/").filter(function(s) { return s.length > 0 })
-    return parts.length ? parts[parts.length - 1] : "/"
+    return parts.length ? parts[parts.length - 1] : root.tr("analyze.disk")
+  }
+
+  function crumbsForAnalyze(path) {
+    var disk = { name: root.tr("analyze.disk"), path: "/" }
+    if (!path || path === "/") return [disk]
+    var parts = String(path).split("/").filter(function(s) { return s.length > 0 })
+    var crumbs = [disk]
+    var acc = ""
+    for (var i = 0; i < parts.length; i++) {
+      acc += "/" + parts[i]
+      if (parts[i] === "home" && i === 0 && parts.length > 1)
+        continue
+      crumbs.push({ name: parts[i], path: acc })
+    }
+    return crumbs
   }
 
   function navigateAnalyze(path) {
-    path = path || ""
-    var crumbs = root.analyzeCrumbs.slice()
-    if (!path) {
-      root.analyzeCrumbs = [{ name: root.tr("analyze.overview"), path: "" }]
-      cli.scanAnalyze("")
-      return
-    }
-    for (var i = 0; i < crumbs.length; i++) {
-      if (crumbs[i].path === path) {
-        root.analyzeCrumbs = crumbs.slice(0, i + 1)
-        cli.scanAnalyze(path)
-        return
-      }
-    }
-    var last = crumbs.length ? crumbs[crumbs.length - 1] : null
-    if (last && last.path === path)
-      return
-    crumbs.push({ name: root.crumbName(path), path: path })
-    root.analyzeCrumbs = crumbs
+    path = path || "/"
+    root.analyzeCrumbs = root.crumbsForAnalyze(path)
     cli.scanAnalyze(path)
   }
 
@@ -541,8 +542,8 @@ Item {
         root.autostartAvailable = data.available || []
         root.dataRev += 1
       } else if (kind === "trash") {
-        var last = root.analyzeCrumbs.length ? root.analyzeCrumbs[root.analyzeCrumbs.length - 1].path : ""
-        cli.scanAnalyze(last)
+        var last = root.analyzeCrumbs.length ? root.analyzeCrumbs[root.analyzeCrumbs.length - 1].path : root.analyzeHome()
+        cli.scanAnalyze(last || "/")
       }
     }
   }
@@ -840,8 +841,27 @@ Item {
             urgent: root.urgent
             pageBg: root.pageBg
             onOpenPath: function(path) { root.navigateAnalyze(path) }
+            onRevealPath: function(path) { root.revealPath(path) }
+            onRefreshRequested: {
+              var last = root.analyzeCrumbs.length ? root.analyzeCrumbs[root.analyzeCrumbs.length - 1].path : root.analyzeHome()
+              cli.scanAnalyze(last || "/")
+            }
             onTrashPath: function(path) {
-              root.ask("trash:" + path, root.tr("analyze.ask", { path: path }))
+              var name = root.crumbName(path)
+              var size = ""
+              var ents = (root.analyzeReport && root.analyzeReport.entries) ? root.analyzeReport.entries : []
+              for (var i = 0; i < ents.length; i++) {
+                if (ents[i].path === path) {
+                  name = ents[i].name || name
+                  size = App.formatBytes(ents[i].size)
+                  if (ents[i].protected) {
+                    root.ask("ack", root.tr("analyze.protected"))
+                    return
+                  }
+                  break
+                }
+              }
+              root.ask("trash:" + path, root.tr("analyze.ask", { name: name, size: size, path: path }))
             }
           }
 

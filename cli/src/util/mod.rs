@@ -214,7 +214,14 @@ pub fn move_to_trash(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn free_space(path: &Path) -> Option<u64> {
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DiskStat {
+    pub total: u64,
+    pub used: u64,
+    pub available: u64,
+}
+
+pub fn disk_stat(path: &Path) -> Option<DiskStat> {
     let out = Command::new("df")
         .args(["-B1", "-P"])
         .arg(path)
@@ -226,7 +233,18 @@ pub fn free_space(path: &Path) -> Option<u64> {
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.lines().nth(1)?;
     let cols: Vec<_> = line.split_whitespace().collect();
-    cols.get(3).and_then(|s| s.parse().ok())
+    if cols.len() < 4 {
+        return None;
+    }
+    Some(DiskStat {
+        total: cols[1].parse().ok()?,
+        used: cols[2].parse().ok()?,
+        available: cols[3].parse().ok()?,
+    })
+}
+
+pub fn free_space(path: &Path) -> Option<u64> {
+    disk_stat(path).map(|s| s.available)
 }
 
 pub fn truncate_left(s: &str, max: usize) -> String {

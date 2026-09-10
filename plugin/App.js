@@ -19,6 +19,26 @@ function formatBytes(n) {
   return (v >= 10 ? v.toFixed(1) : v.toFixed(2)) + " " + units[i]
 }
 
+function formatBytesPair(used, total) {
+  used = Number(used || 0)
+  total = Number(total || 0)
+  if (total < 1024 && used < 1024)
+    return Math.round(used) + " / " + Math.round(total) + " B"
+  var units = ["KB", "MB", "GB", "TB"]
+  var v = Math.max(used, total)
+  var i = -1
+  do {
+    v /= 1024
+    i++
+  } while (v >= 1024 && i < units.length - 1)
+  function part(n) {
+    var x = n
+    for (var k = 0; k <= i; k++) x /= 1024
+    return x >= 10 ? x.toFixed(1) : x.toFixed(2)
+  }
+  return part(used) + " / " + part(total) + " " + units[i]
+}
+
 function parseJson(text) {
   try {
     return JSON.parse(String(text || ""))
@@ -224,44 +244,219 @@ function filterPackages(pkgs, query) {
   return out
 }
 
-function squarify(entries, x, y, w, h) {
-  var items = []
-  var total = 0
-  for (var i = 0; i < entries.length; i++) {
-    var sz = Number(entries[i].size || 0)
-    if (sz <= 0) continue
-    items.push(entries[i])
-    total += sz
-  }
-  if (total <= 0 || w <= 0 || h <= 0) return []
-  items.sort(function(a, b) { return Number(b.size) - Number(a.size) })
-  var maxTiles = Math.min(items.length, 18)
-  items = items.slice(0, maxTiles)
-  total = 0
-  for (i = 0; i < items.length; i++) total += Number(items[i].size)
-  return sliceDice(items, total, x, y, w, h, true)
+function sumSizes(items) {
+  var t = 0
+  for (var i = 0; i < items.length; i++) t += Number(items[i].size || 0)
+  return t
 }
 
-function sliceDice(items, total, x, y, w, h, vertical) {
+function clampNum(lo, hi, v) {
+  return Math.max(lo, Math.min(hi, v))
+}
+
+function minTileSize(w, h) {
+  return { minW: 96, minH: 72 }
+}
+
+function worstAspect(row, side, scale) {
+  if (!row.length || side <= 0) return Infinity
+  var s = sumSizes(row) * scale
+  if (s <= 0) return Infinity
+  var worst = 0
+  var thick = s / side
+  if (thick <= 0) return Infinity
+  for (var i = 0; i < row.length; i++) {
+    var a = Number(row[i].size) * scale
+    var along = a / thick
+    if (along <= 0) return Infinity
+    var ar = thick > along ? thick / along : along / thick
+    if (ar > worst) worst = ar
+  }
+  return worst
+}
+
+function layoutRow(rects, row, x, y, thickW, thickH, vertical) {
+  var s = sumSizes(row)
+  if (s <= 0) return
+  if (vertical) {
+    var cy = y
+    var left = thickH
+    for (var i = 0; i < row.length; i++) {
+      var hh = i === row.length - 1 ? left : thickH * (Number(row[i].size) / s)
+      if (hh < 0) hh = 0
+      rects.push({ x: x, y: cy, w: thickW, h: hh, entry: row[i] })
+      cy += hh
+      left -= hh
+    }
+  } else {
+    var cx = x
+    var leftW = thickW
+    for (i = 0; i < row.length; i++) {
+      var ww = i === row.length - 1 ? leftW : thickW * (Number(row[i].size) / s)
+      if (ww < 0) ww = 0
+      rects.push({ x: cx, y: y, w: ww, h: thickH, entry: row[i] })
+      cx += ww
+      leftW -= ww
+    }
+  }
+}
+
+function remainderEntry(hidden) {
+  return {
+    name: "",
+    path: "",
+    size: sumSizes(hidden),
+    is_dir: true,
+    protected: true,
+    remainder: true,
+    leftover: hidden.length
+  }
+}
+
+function squarifyLayout(items, x, y, w, h) {
   var rects = []
-  var cursor = vertical ? y : x
-  for (var i = 0; i < items.length; i++) {
-    var frac = Number(items[i].size) / total
-    var span = (vertical ? h : w) * frac
-    var rect = vertical
-      ? { x: x, y: cursor, w: w, h: span }
-      : { x: cursor, y: y, w: span, h: h }
-    rect.entry = items[i]
-    rects.push(rect)
-    cursor += span
+  var rest = items.slice()
+  while (rest.length) {
+    if (w < 1 || h < 1) break
+    var total = sumSizes(rest)
+    if (total <= 0) break
+    var scale = (w * h) / total
+    var shortest = Math.min(w, h)
+    var vertical = w >= h
+    var row = []
+    while (rest.length) {
+      var trial = row.concat([rest[0]])
+      if (!row.length || worstAspect(row, shortest, scale) >= worstAspect(trial, shortest, scale)) {
+        row = trial
+        rest.shift()
+      } else {
+        break
+      }
+    }
+    var s = sumSizes(row)
+    if (vertical) {
+      var colW = w * (s / total)
+      layoutRow(rects, row, x, y, colW, h, true)
+      x += colW
+      w -= colW
+    } else {
+      var rowH = h * (s / total)
+      layoutRow(rects, row, x, y, w, rowH, false)
+      y += rowH
+      h -= rowH
+    }
+  }
+  return rects
+}
+
+function packShown(shown, hidden) {
+  var out = shown.slice()
+  if (hidden.length) out.push(remainderEntry(hidden))
+  return out
+}
+
+function tileFits(rect, minW, minH) {
+  if (!rect) return false
+  var short = Math.min(rect.w, rect.h)
+  var long = Math.max(rect.w, rect.h)
+  if (rect.w + 0.5 < minW || rect.h + 0.5 < minH) return false
+  if (short > 0 && long / short > 4.2) return false
+  return true
+}
+
+function allTilesFit(rects, minW, minH) {
+  for (var i = 0; i < rects.length; i++) {
+    if (!tileFits(rects[i], minW, minH)) return false
+  }
+  return rects.length > 0
+}
+
+function layoutDominantWithStrip(main, restItems, x, y, w, h, minW, minH) {
+  if (!restItems.length)
+    return [{ x: x, y: y, w: w, h: h, entry: main }]
+  var rest = remainderEntry(restItems)
+  var total = Number(main.size) + Number(rest.size)
+  if (total <= 0)
+    return [{ x: x, y: y, w: w, h: h, entry: main }]
+  var vertical = w >= h
+  var span = vertical ? w : h
+  var minStrip = vertical ? Math.max(minW, 136) : Math.max(minH, 88)
+  var prop = span * (Number(rest.size) / total)
+  var thick = Math.max(prop, minStrip)
+  thick = Math.min(thick, span * 0.38)
+  var mainSpan = span - thick
+  var minMain = vertical ? minW : minH
+  if (mainSpan < minMain)
+    return [{ x: x, y: y, w: w, h: h, entry: main }]
+  var rects = []
+  if (vertical) {
+    layoutRow(rects, [main], x, y, mainSpan, h, true)
+    rects.push({ x: x + mainSpan, y: y, w: thick, h: h, entry: rest })
+  } else {
+    layoutRow(rects, [main], x, y, w, mainSpan, false)
+    rects.push({ x: x, y: y + mainSpan, w: w, h: thick, entry: rest })
+  }
+  return rects
+}
+
+function squarify(entries, x, y, w, h) {
+  w = Number(w || 0)
+  h = Number(h || 0)
+  if (w < 8 || h < 8) return []
+  var items = []
+  for (var i = 0; i < entries.length; i++) {
+    if (Number(entries[i].size || 0) > 0) items.push(entries[i])
+  }
+  if (!items.length) return []
+  items.sort(function(a, b) { return Number(b.size) - Number(a.size) })
+
+  var min = minTileSize(w, h)
+  var total = sumSizes(items) || 1
+  var mapArea = w * h
+  var minArea = min.minW * min.minH
+  var cols = Math.max(1, Math.floor(w / min.minW))
+  var rows = Math.max(1, Math.floor(h / min.minH))
+  var maxNamed = Math.round(clampNum(3, 8, cols * rows / 10))
+
+  var shown = []
+  for (i = 0; i < items.length && shown.length < maxNamed; i++) {
+    var itemArea = mapArea * (Number(items[i].size) / total)
+    if (shown.length >= 1 && itemArea < minArea * 0.8)
+      break
+    shown.push(items[i])
+  }
+  if (!shown.length) shown = items.slice(0, 1)
+  var hidden = items.slice(shown.length)
+
+  function layout() {
+    return squarifyLayout(packShown(shown, hidden), x, y, w, h)
+  }
+
+  var rects = layout()
+  while (hidden.length && shown.length < maxNamed) {
+    shown.push(hidden[0])
+    hidden = hidden.slice(1)
+    var trial = layout()
+    if (!allTilesFit(trial, min.minW, min.minH)) {
+      hidden.unshift(shown.pop())
+      break
+    }
+    rects = trial
+  }
+  while (shown.length > 1 && !allTilesFit(rects, min.minW, min.minH)) {
+    hidden.unshift(shown.pop())
+    rects = layout()
+  }
+  if (!allTilesFit(rects, min.minW, min.minH) && hidden.length) {
+    rects = layoutDominantWithStrip(shown[0], shown.slice(1).concat(hidden), x, y, w, h, min.minW, min.minH)
   }
   return rects
 }
 
 function tileColor(index, name) {
   var palette = [
-    "#d6b36a", "#c47a4a", "#b04a3a", "#8a6aa8", "#6a7a8a",
-    "#c9a35c", "#9b5a3c", "#7a8b6a", "#5a6d8a", "#a07050"
+    "#c9a15a", "#c47248", "#b04a3a", "#8a6aa0", "#6a7a88",
+    "#c9a35c", "#9b5a3c", "#6e8b6a", "#5a6d8a", "#a07050"
   ]
   return palette[index % palette.length]
 }

@@ -12,7 +12,7 @@ Inspired by the workflow of [Mole](https://github.com/tw93/Mole), rebuilt for Ar
 | `omakeeper clean` | ✅ scan + TUI pick + apply (user caches, browsers, apps, logs, dev) |
 | `omakeeper purge` | ✅ scan + TUI pick + confirm |
 | `omakeeper installer` | ✅ Downloads / Desktop / Documents / Telegram leftovers |
-| `omakeeper analyze` | ✅ disk explorer (overview, drill-in, trash) |
+| `omakeeper analyze` | ✅ disk explorer (treemap, drill-in, reveal, trash) |
 | `omakeeper status` | ✅ health dashboard (`--watch` for live) |
 | `omakeeper history` | ✅ |
 | `omakeeper whitelist` | ✅ |
@@ -104,7 +104,7 @@ In a TTY, `clean` / `purge` / `installer` / `uninstall` / `optimize` open a sele
 
 Busy processes (Firefox, Chrome, cargo, …) are skipped so live caches are not deleted. Installer items start unselected. Purge unselects artifacts touched in the last 7 days.
 
-`analyze` moves selected items to the XDG trash (`~/.local/share/Trash`) after `d`, and refuses paths outside `$HOME`.
+`analyze` moves selected items to the XDG trash (`~/.local/share/Trash`) after confirm, and refuses system paths (`/usr`, `/etc`, `$HOME` itself, …). The overlay treemap drills by folder, jumps from the path bar, and right-click reveals in the file manager.
 
 ## Safety
 
