@@ -55,8 +55,10 @@ Item {
     PixelField {
       width: parent.width
       creatureSize: Style.space(96)
-      mood: Number(root.snap.health_score || 100) < 70 ? "busy" : "idle"
+      mood: "idle"
       drawField: false
+      sweep: false
+      interactive: true
       markScale: App.CONTENT_MARK_SCALE
       showCaption: false
       uiLang: root.uiLang

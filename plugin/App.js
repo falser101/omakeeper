@@ -94,7 +94,7 @@ function allBytes(items) {
 }
 
 function groupClean(items) {
-  var preferred = ["user", "browser", "apps", "dev", "packages", "flatpak", "logs", "leftovers", "downloads", "other"]
+  var preferred = ["ai", "user", "browser", "apps", "dev", "packages", "flatpak", "logs", "leftovers", "downloads", "other"]
   var order = []
   var map = {}
   for (var i = 0; i < items.length; i++) {
@@ -117,8 +117,59 @@ function groupClean(items) {
   return order.map(function(c) { return map[c] })
 }
 
+function parseLogTs(ts) {
+  var s = String(ts || "")
+  var m = s.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})([+-]\d{2})(\d{2})$/)
+  if (m) s = m[1] + m[2] + ":" + m[3]
+  var t = Date.parse(s)
+  return isNaN(t) ? 0 : t
+}
+
+function lastOptimizeAt(entries) {
+  if (!entries || !entries.length) return 0
+  for (var i = 0; i < entries.length; i++) {
+    var e = entries[i]
+    if (e && e.command === "optimize" && !e.dry_run) {
+      var t = parseLogTs(e.ts)
+      if (t) return t
+    }
+  }
+  return 0
+}
+
+function relativeWhen(ms, tr) {
+  if (!ms) return ""
+  var sec = Math.max(0, (Date.now() - Number(ms)) / 1000)
+  if (sec < 45) return tr("opt.whenJust")
+  if (sec < 3600) return tr("opt.whenMinutes", { n: Math.max(1, Math.round(sec / 60)) })
+  if (sec < 86400) return tr("opt.whenHours", { n: Math.max(1, Math.round(sec / 3600)) })
+  var days = Math.round(sec / 86400)
+  if (days < 30) return tr("opt.whenDays", { n: days })
+  return tr("opt.whenWeeks", { n: Math.max(1, Math.round(days / 7)) })
+}
+
+function optimizeDue(ms, tasks) {
+  var journalDue = false
+  var list = tasks || []
+  for (var i = 0; i < list.length; i++) {
+    var t = list[i]
+    if ((t.id === "journal-user" || t.id === "journal-system")
+        && t.status === "ready"
+        && Number(t.bytes || 0) >= 64 * 1024 * 1024) {
+      journalDue = true
+      break
+    }
+  }
+  if (!ms) return "never"
+  if (journalDue) return "journal"
+  var age = Date.now() - Number(ms)
+  if (age < 20 * 3600 * 1000) return "fresh"
+  if (age >= 7 * 86400 * 1000) return "stale"
+  return "ok"
+}
+
 function historyTotals(entries) {
-  var out = { cleaned: 0, uninstalled: 0, optimized: 0 }
+  var out = { cleaned: 0, uninstalled: 0, optimized: 0, lastOptimizeAt: 0 }
   if (!entries || !entries.length) return out
   for (var i = 0; i < entries.length; i++) {
     var e = entries[i]
@@ -128,8 +179,13 @@ function historyTotals(entries) {
       out.cleaned += n
     else if (e.command === "uninstall")
       out.uninstalled += 1
-    else if (e.command === "optimize")
+    else if (e.command === "optimize") {
       out.optimized += Number(e.items || 0)
+      if (!out.lastOptimizeAt) {
+        var t = parseLogTs(e.ts)
+        if (t) out.lastOptimizeAt = t
+      }
+    }
   }
   return out
 }
@@ -325,6 +381,7 @@ function mergeIconMaps(iconFiles, appLibrary, desktopValues) {
 function cleanCategoryMeta(cat) {
   var key = String(cat || "other")
   var assets = {
+    ai: "cat-ai.png",
     user: "cat-user.png",
     browser: "cat-browser.png",
     apps: "cat-apps.png",
@@ -424,7 +481,96 @@ function isCacheLeafName(name) {
     || name === "ShaderCache" || name === "GPUCache" || name === "blob_storage"
 }
 
+function translateOr(tr, key, fallback) {
+  if (!tr || !key) return fallback || ""
+  var t = tr(key)
+  return t && t !== key ? t : (fallback || "")
+}
+
+function optimizeLabel(task, tr) {
+  if (!task) return ""
+  var named = translateOr(tr, "opt.task." + String(task.id || ""), "")
+  return named || String(task.label || "")
+}
+
+function optimizeDetail(task, tr) {
+  if (!task) return ""
+  var d = String(task.detail || "")
+  if (!d) return ""
+  if (d === "already small") return tr("opt.detail.alreadySmall")
+  if (d === "nothing to do") return tr("opt.detail.nothing")
+  if (d === "no user icon themes") return tr("opt.detail.noIconThemes")
+  if (d === "journalctl --user not available") return tr("opt.detail.journalctlMissing")
+  if (d.indexOf("needs sudo") === 0) return tr("opt.detail.needsSudo")
+  if (d.indexOf("current ") === 0)
+    return tr("opt.detail.current", { size: d.substring("current ".length) })
+  var themeAt = d.indexOf(" theme")
+  if (themeAt > 0) {
+    var n = d.substring(0, themeAt)
+    if (/^\d+$/.test(n)) return tr("opt.detail.themes", { n: n })
+  }
+  var missing = " not installed"
+  var cut = d.indexOf(missing)
+  if (cut > 0 && cut + missing.length === d.length)
+    return tr("opt.detail.notInstalled", { bin: d.substring(0, cut) })
+  return translateOr(tr, "opt.hint." + String(task.id || ""), d)
+}
+
+function joinLocalized(prefix, leaf, lang) {
+  if (!leaf) return prefix
+  if (lang === "zh") {
+    var lc = leaf.charAt(0)
+    var pc = prefix.charAt(0)
+    var ascii = function(c) {
+      return (c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || (c >= "0" && c <= "9")
+    }
+    if (ascii(lc) || ascii(pc))
+      return prefix + " " + leaf
+    return prefix + leaf
+  }
+  return prefix + " " + leaf
+}
+
+function cleanItemLabel(it, tr, lang) {
+  if (!it) return ""
+  var key = String(it.label_key || "")
+  if (key) {
+    var direct = translateOr(tr, "ai.item." + key, "")
+    if (direct) return direct
+    var dot = key.indexOf(".")
+    if (dot > 0) {
+      var p = translateOr(tr, "ai.prefix." + key.substring(0, dot), "")
+      var l = translateOr(tr, "ai.leaf." + key.substring(dot + 1), "")
+      if (p && l) return joinLocalized(p, l, lang)
+    }
+  }
+  return String(it.label || "")
+}
+
+function cleanRowLabel(row, tr, lang) {
+  if (row && row.kind === "group" && row.group)
+    return translateOr(tr, "ai.group." + row.group, row.label)
+  return cleanItemLabel(row, tr, lang)
+}
+
+function cleanSkipReason(reason, tr) {
+  var s = String(reason || "")
+  if (!s) return ""
+  if (s.length > 5 && s.substring(s.length - 5) === " busy")
+    return tr("clean.busy", { name: s.substring(0, s.length - 5) })
+  return s
+}
+
 function nestKey(it) {
+  if (it && it.group) {
+    return {
+      key: "g:" + it.category + ":" + it.group,
+      title: it.group_label || it.group,
+      group: it.group,
+      parentPath: "",
+      always: true
+    }
+  }
   var path = String((it && it.path) || "")
   var segs = path.split("/").filter(function(s) { return s.length > 0 })
   if (segs.length < 2) return null
@@ -456,7 +602,7 @@ function nestCategoryItems(items) {
   var rows = []
   for (i = 0; i < keys.length; i++) {
     var b = map[keys[i]]
-    if (!b.nest || b.items.length < 2) {
+    if (!b.nest || (!b.nest.always && b.items.length < 2)) {
       for (var j = 0; j < b.items.length; j++) {
         rows.push({ kind: "item", item: b.items[j], bytes: Number(b.items[j].bytes || 0) })
       }
@@ -473,6 +619,8 @@ function pushCleanItem(out, it, kind, depth) {
     kind: kind,
     id: it.id,
     label: it.label,
+    label_key: it.label_key || "",
+    group: it.group || "",
     bytes: it.bytes,
     path: it.path,
     category: it.category,
@@ -519,6 +667,7 @@ function groupCleanRows(items, expanded) {
         id: row.nest.key,
         category: g.category,
         label: row.nest.title,
+        group: row.nest.group || "",
         path: row.nest.parentPath,
         bytes: row.bytes,
         count: row.items.length,
@@ -532,7 +681,11 @@ function groupCleanRows(items, expanded) {
         var child = row.items[c]
         var leaf = {
           id: child.id,
-          label: String(child.path || "").split("/").filter(function(s) { return s }).pop() || child.label,
+          label: row.nest.always
+            ? child.label
+            : (String(child.path || "").split("/").filter(function(s) { return s }).pop() || child.label),
+          label_key: child.label_key || "",
+          group: child.group || "",
           bytes: child.bytes,
           path: child.path,
           category: child.category,
@@ -645,6 +798,85 @@ function attachPackageIcons(packages, desktopIndex, appLibrary) {
     pkg.icon = icon || pkg.icon || ""
   }
   return packages
+}
+
+var AI_BUNDLED_ICONS = {
+  claude: "claude",
+  cursor: "cursor",
+  codex: "codex",
+  grok: "grok",
+  gemini: "gemini",
+  qwen: "qwen",
+  models: "models",
+  copilot: "copilot",
+  trae: "trae",
+  windsurf: "windsurf",
+  goose: "goose",
+  hermes: "hermes",
+  workbuddy: "workbuddy",
+  zed: "zed",
+  openclaw: "openclaw",
+  pi: "pi",
+  opencode: "opencode"
+}
+
+var AI_GROUP_DESKTOP = {
+  claude: ["claude", "claude-desktop"],
+  cursor: ["cursor"],
+  codex: ["codex"],
+  grok: ["grok-bot", "grok"],
+  gemini: ["gemini", "antigravity-ide"],
+  openclaw: ["openclaw"],
+  hermes: ["hermes-desktop", "hermes"],
+  trae: ["trae"],
+  qwen: ["qwen"],
+  opencode: ["opencode", "ai.opencode.desktop"],
+  workbuddy: ["workbuddy"],
+  pi: ["pi"],
+  zed: ["zed"],
+  copilot: ["copilot", "github-copilot"],
+  continue: ["continue"],
+  aider: ["aider"],
+  windsurf: ["windsurf", "codeium"],
+  amazonq: ["amazon-q"],
+  crush: ["crush"],
+  goose: ["goose"],
+  models: ["ollama", "huggingface"]
+}
+
+function aiGroupIcon(group, desktopIndex) {
+  group = String(group || "")
+  if (AI_BUNDLED_ICONS[group])
+    return "assets/agents/" + AI_BUNDLED_ICONS[group] + ".png"
+  var list = AI_GROUP_DESKTOP[group] || (group ? [group] : [])
+  for (var i = 0; i < list.length; i++) {
+    var hit = lookupDesktopIcon(list[i], desktopIndex)
+    if (hit) return hit
+  }
+  return ""
+}
+
+function lookupAppIcon(row, desktopIndex) {
+  if (!row) return ""
+  var label = String(row.label || "")
+  var path = String(row.path || "")
+  var hit = lookupDesktopIcon(label, desktopIndex)
+  if (hit) return hit
+  var base = label.replace(/\s+(cache|logs|log)$/i, "")
+  if (base && base !== label) {
+    hit = lookupDesktopIcon(base, desktopIndex)
+    if (hit) return hit
+  }
+  hit = iconFromPath(path, desktopIndex)
+  if (hit) return hit
+  var words = label.split(/[\s_/]+/)
+  for (var i = 0; i < words.length; i++) {
+    var w = words[i]
+    if (!w || w.toLowerCase() === "cache" || w.toLowerCase() === "logs") continue
+    hit = lookupDesktopIcon(w, desktopIndex)
+    if (hit) return hit
+  }
+  return ""
 }
 
 function iconNameForCleanItem(item, desktopIndex) {

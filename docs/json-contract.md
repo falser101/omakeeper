@@ -9,10 +9,12 @@ Machine-readable output for the Omarchy plugin and scripts. Prefer `--json` with
   "dry_run": true,
   "items": [
     {
-      "id": "dev:/home/me/.cache/pip",
-      "category": "dev",
-      "label": "pip cache",
-      "path": "/home/me/.cache/pip",
+      "id": "ai:/home/me/.cache/codex-runtimes",
+      "category": "ai",
+      "group": "codex",
+      "group_label": "Codex",
+      "label": "Runtimes",
+      "path": "/home/me/.cache/codex-runtimes",
       "bytes": 123456,
       "selected": true,
       "skip_reason": null
@@ -24,7 +26,9 @@ Machine-readable output for the Omarchy plugin and scripts. Prefer `--json` with
 }
 ```
 
-Busy items set `selected` to `false` and fill `skip_reason` (for example `"firefox busy"`). Optional `action` is set for command-backed items (`pacman-sc`, `flatpak-unused`) instead of a plain directory delete. Leftovers, old downloads, Steam shader cache, Gradle, and pacman package cache start unselected.
+Busy items set `selected` to `false` and fill `skip_reason` (for example `"firefox busy"`). Optional `action` is set for command-backed items (`pacman-sc`, `flatpak-unused`) instead of a plain directory delete. Leftovers, old downloads, Steam shader cache, Gradle, pacman package cache, and local model weights start unselected. AI chat history is never listed.
+
+`category: "ai"` items include optional `group` / `group_label` (the agent: `claude`, `codex`, `cursor`, `grok`, `models`, …) and `label_key` for overlay i18n. The overlay nests those rows under the agent name. Credentials, settings, and installed plugins are never listed.
 
 ## `omakeeper purge --dry-run --json`
 

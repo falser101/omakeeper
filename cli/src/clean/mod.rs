@@ -11,6 +11,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod ai;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CleanItem {
     pub id: String,
@@ -23,6 +25,12 @@ pub struct CleanItem {
     pub skip_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,6 +57,9 @@ struct Candidate {
     busy: Vec<&'static str>,
     default_on: bool,
     action: Option<&'static str>,
+    group: Option<String>,
+    group_label: Option<String>,
+    label_key: Option<String>,
 }
 
 const CATALOG: &[Spec] = &[
@@ -163,6 +174,50 @@ fn push_unique(
     default_on: bool,
     action: Option<&'static str>,
 ) {
+    push_candidate(
+        seen, out, cat, label, path, busy, default_on, action, None, None, None,
+    );
+}
+
+fn push_ai(
+    seen: &mut HashSet<PathBuf>,
+    out: &mut Vec<Candidate>,
+    group_id: &str,
+    group_label: &str,
+    label: &str,
+    label_key: &str,
+    path: PathBuf,
+    busy: &[&'static str],
+    default_on: bool,
+) {
+    push_candidate(
+        seen,
+        out,
+        "ai",
+        label,
+        path,
+        busy,
+        default_on,
+        None,
+        Some(group_id.to_string()),
+        Some(group_label.to_string()),
+        Some(label_key.to_string()),
+    );
+}
+
+fn push_candidate(
+    seen: &mut HashSet<PathBuf>,
+    out: &mut Vec<Candidate>,
+    cat: &str,
+    label: &str,
+    path: PathBuf,
+    busy: &[&'static str],
+    default_on: bool,
+    action: Option<&'static str>,
+    group: Option<String>,
+    group_label: Option<String>,
+    label_key: Option<String>,
+) {
     if action.is_none() && !path.exists() {
         return;
     }
@@ -181,6 +236,9 @@ fn push_unique(
         busy: busy.to_vec(),
         default_on,
         action,
+        group,
+        group_label,
+        label_key,
     });
 }
 
@@ -201,6 +259,8 @@ fn candidate_paths() -> Result<Vec<Candidate>> {
             None,
         );
     }
+
+    ai::scan(&home, &mut seen, &mut out);
 
     scan_cache_leftovers(&home, &mut seen, &mut out)?;
     scan_electron_caches(&home, &mut seen, &mut out)?;
@@ -397,6 +457,9 @@ fn installed_names() -> HashSet<String> {
 fn dir_is_known(name: &str, installed: &HashSet<String>) -> bool {
     let n = name.to_ascii_lowercase();
     if USER_DIR_KEEP.iter().any(|k| n == *k || n.starts_with(&format!("{k}-"))) {
+        return true;
+    }
+    if ai::keep_dir_name(&n) {
         return true;
     }
     if is_skipped_cache_name(&n) || is_model_cache_name(&n) {
@@ -596,7 +659,18 @@ fn scan() -> Result<Vec<CleanItem>> {
         if cand.category == "leftovers" && bytes < 1_048_576 {
             continue;
         }
-        let skip = busy_for(&cand.path, &cand.busy, &running);
+        if cand.category == "ai" && !special && bytes < 1_048_576 {
+            continue;
+        }
+        let skip = if cand.category == "ai" {
+            if !cand.busy.is_empty() && util::any_running(&running, &cand.busy) {
+                Some(format!("{} busy", cand.busy[0]))
+            } else {
+                None
+            }
+        } else {
+            busy_for(&cand.path, &cand.busy, &running)
+        };
         items.push(CleanItem {
             id: format!("{}:{}", cand.category, cand.path.display()),
             category: cand.category,
@@ -606,6 +680,9 @@ fn scan() -> Result<Vec<CleanItem>> {
             selected: skip.is_none() && cand.default_on,
             skip_reason: skip,
             action: cand.action.map(|s| s.to_string()),
+            group: cand.group,
+            group_label: cand.group_label,
+            label_key: cand.label_key,
         });
     }
     items.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.category.cmp(&b.category)));
@@ -637,9 +714,13 @@ fn print_human(items: &[CleanItem], dry_run: bool) {
             .as_deref()
             .map(|s| format!(" ({s})"))
             .unwrap_or_default();
+        let title = match item.group_label.as_deref() {
+            Some(g) => format!("{g} · {}", item.label),
+            None => item.label.clone(),
+        };
         println!(
             "  {mark} {:<40} {:>10}{extra}",
-            util::truncate_right(&item.label, 40),
+            util::truncate_right(&title, 40),
             util::format_bytes(item.bytes)
         );
         println!("      {}", item.path);

@@ -54,6 +54,8 @@ Item {
   property var optimizeSelected: ({})
   property var optimizeLog: []
   property int optimizeDone: 0
+  property string optimizePhase: "idle"
+  property var lastOptimizeAt: 0
   property var packages: []
   property var pkgSelected: ({})
   property var pkgExpanded: ({})
@@ -343,6 +345,7 @@ Item {
       }
       root.optimizeLog = []
       root.optimizeDone = 0
+      root.optimizePhase = "applying"
       cli.applyOptimize(ids)
     } else if (root.confirmKind === "uninstall") {
       var names = []
@@ -374,6 +377,8 @@ Item {
       cli.applyUninstall(names, leftoverPaths)
     } else if (root.confirmKind.indexOf("trash:") === 0) {
       cli.trashPaths([root.confirmKind.substring(6)])
+    } else if (root.confirmKind.indexOf("autostart-remove:") === 0) {
+      cli.removeAutostart(root.confirmKind.substring("autostart-remove:".length))
     }
     root.confirmKind = ""
   }
@@ -381,8 +386,22 @@ Item {
   Service {
     id: cli
     onProgressed: function(kind, data) {
-      if (kind !== "clean-apply" || !data) return
-      if (data.event === "item") {
+      if (!data) return
+      if (kind === "clean-apply" && data.event === "item") {
+        var src = null
+        for (var i = 0; i < root.cleanItems.length; i++) {
+          if (root.cleanItems[i].id === data.id || root.cleanItems[i].path === data.path) {
+            src = root.cleanItems[i]
+            break
+          }
+        }
+        if (src) {
+          data.category = src.category
+          data.group = src.group
+          data.group_label = src.group_label
+          data.label_key = src.label_key
+          if (src.label) data.label = src.label
+        }
         var log = root.cleanProgress.slice()
         log.push(data)
         root.cleanProgress = log
@@ -390,6 +409,15 @@ Item {
         root.cleanCurrent = data
         if (data.ok === false) root.cleanSkipped += 1
         if (data.freed != null) root.cleanFreed = Number(data.freed)
+        root.dataRev += 1
+        return
+      }
+      if (kind === "optimize-apply" && data.event === "item") {
+        root.optimizeDone = data.applied != null ? Number(data.applied) : root.optimizeDone + 1
+        var lines = root.optimizeLog.slice()
+        var label = App.optimizeLabel(data, function(k, v) { return root.tr(k, v) }) || data.label || data.id || ""
+        lines.push((data.ok === false ? "✕  " : "✓  ") + label)
+        root.optimizeLog = lines
         root.dataRev += 1
       }
     }
@@ -412,25 +440,38 @@ Item {
         cli.scanHistory()
       } else if (kind === "optimize-scan" && data && data.tasks) {
         root.optimizeTasks = data.tasks
+        var recent = root.lastOptimizeAt && (Date.now() - Number(root.lastOptimizeAt) < 7 * 86400 * 1000)
         var sel = {}
-        for (var i = 0; i < data.tasks.length; i++)
-          sel[data.tasks[i].id] = !!data.tasks[i].selected
+        for (var i = 0; i < data.tasks.length; i++) {
+          var t = data.tasks[i]
+          if (recent && t.id !== "journal-user" && t.id !== "journal-system")
+            sel[t.id] = false
+          else
+            sel[t.id] = !!t.selected
+        }
         root.optimizeSelected = sel
+        if (root.optimizePhase !== "applying" && root.optimizePhase !== "done")
+          root.optimizePhase = "review"
         root.dataRev += 1
       } else if (kind === "optimize-apply") {
-        root.optimizeDone = data && data.applied ? data.applied : root.optimizeDone + 1
-        var lines = root.optimizeLog.slice()
-        if (data && data.tasks) {
-          for (var j = 0; j < data.tasks.length; j++) {
-            if (data.tasks[j].status === "applied")
-              lines.push(data.tasks[j].label)
-          }
+        if (error) {
+          root.optimizePhase = "review"
         } else {
-          lines.push(root.tr("opt.done"))
+          root.optimizeDone = data && data.applied != null ? Number(data.applied) : root.optimizeDone
+          if (data && data.tasks && !root.optimizeLog.length) {
+            var lines = []
+            for (var j = 0; j < data.tasks.length; j++) {
+              if (data.tasks[j].status === "applied" || data.tasks[j].status === "failed") {
+                var mark = data.tasks[j].status === "applied" ? "✓  " : "✕  "
+                lines.push(mark + App.optimizeLabel(data.tasks[j], function(k, v) { return root.tr(k, v) }))
+              }
+            }
+            root.optimizeLog = lines
+          }
+          root.lastOptimizeAt = Date.now()
+          root.optimizePhase = "done"
+          cli.scanHistory()
         }
-        root.optimizeLog = lines
-        cli.scanOptimize()
-        cli.scanHistory()
       } else if (kind === "uninstall-scan" && data && data.packages) {
         root.packages = App.attachPackageIcons(data.packages, root.desktopIndex, root.appLibrary)
         var lo = ({})
@@ -491,6 +532,9 @@ Item {
         root.dataRev += 1
       } else if (kind === "history" && data) {
         root.historyTotals = App.historyTotals(data)
+        var at = Number(root.historyTotals.lastOptimizeAt || 0)
+        if (at && at >= Number(root.lastOptimizeAt || 0))
+          root.lastOptimizeAt = at
         root.dataRev += 1
       } else if (kind.indexOf("autostart") === 0 && data) {
         root.autostartItems = data.items || []
@@ -711,7 +755,17 @@ Item {
             onAutostartScanRequested: cli.scanAutostart()
             onAutostartSet: function(id, on) { cli.setAutostart(id, on) }
             onAutostartAdd: function(id) { cli.addAutostart(id) }
-            onAutostartRemove: function(id) { cli.removeAutostart(id) }
+            onAutostartRemove: function(id) {
+              var name = id
+              var items = root.autostartItems || []
+              for (var i = 0; i < items.length; i++) {
+                if (items[i].id === id) {
+                  name = items[i].name || id
+                  break
+                }
+              }
+              root.ask("autostart-remove:" + id, root.tr("soft.autostartAskRemove", { name: name }))
+            }
             uiLang: root.uiLang
             selectedBg: root.selectedBg
             accent: root.accent
@@ -754,6 +808,8 @@ Item {
             scanning: cli.busy && cli.kind === "optimize-scan"
             applying: cli.busy && cli.kind === "optimize-apply"
             doneCount: root.optimizeDone
+            phase: root.optimizePhase
+            lastOptimizeAt: root.lastOptimizeAt
             foreground: root.foreground
             uiLang: root.uiLang
             accent: root.accent
@@ -762,6 +818,12 @@ Item {
             onToggleId: function(id) { root.toggleTask(id) }
             onScanRequested: cli.scanOptimize()
             onApplyRequested: root.ask("optimize", root.tr("opt.ask"))
+            onResetRequested: {
+              root.optimizePhase = "idle"
+              root.optimizeLog = []
+              root.optimizeDone = 0
+              cli.scanOptimize()
+            }
           }
 
           AnalyzeView {

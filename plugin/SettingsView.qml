@@ -28,6 +28,8 @@ Item {
     width: parent.width
     mood: "idle"
     drawField: false
+    sweep: false
+    interactive: true
     markScale: App.CONTENT_MARK_SCALE
     creatureSize: Style.space(96)
     headline: root.tr("settings.title")

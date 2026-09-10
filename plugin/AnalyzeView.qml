@@ -71,8 +71,10 @@ Item {
     y: Style.space(12)
     width: parent.width
     creatureSize: Style.space(96)
-    mood: root.scanning ? "busy" : "idle"
+    mood: "idle"
     drawField: false
+    sweep: false
+    interactive: true
     markScale: App.CONTENT_MARK_SCALE
     showCaption: true
     headline: App.formatBytes((root.report && root.report.total_size) || 0)

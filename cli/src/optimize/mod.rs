@@ -3,7 +3,9 @@ use crate::ui::picker::{self, PickItem};
 use crate::util;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -616,24 +618,45 @@ pub fn run(dry_run: bool, yes: bool, json: bool, select_file: Option<&str>) -> R
 
     let mut freed = 0u64;
     let mut applied = 0usize;
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
     for i in selected {
         let (status, detail, bytes) = apply_task(&tasks[i], false);
-        let mark = if matches!(status, TaskStatus::Applied) {
+        let ok = matches!(status, TaskStatus::Applied);
+        if ok {
             applied += 1;
             freed += bytes;
-            "✓"
+        }
+        if json {
+            let _ = writeln!(
+                out,
+                "{}",
+                json!({
+                    "event": "item",
+                    "id": tasks[i].id,
+                    "label": tasks[i].label,
+                    "ok": ok,
+                    "detail": detail,
+                    "applied": applied,
+                    "freed": freed,
+                })
+            );
+            let _ = out.flush();
         } else {
-            "✗"
-        };
-        println!("  {mark} {} · {detail}", tasks[i].label);
+            let mark = if ok { "✓" } else { "✗" };
+            let _ = writeln!(out, "  {mark} {} · {detail}", tasks[i].label);
+        }
         tasks[i].status = status;
         tasks[i].detail = detail;
     }
 
-    println!(
-        "\nOptimization complete\nApplied {applied} · freed {}",
-        util::format_bytes(freed)
-    );
+    if !json {
+        let _ = writeln!(
+            out,
+            "\nOptimization complete\nApplied {applied} · freed {}",
+            util::format_bytes(freed)
+        );
+    }
     history::log_operation("optimize", false, freed, applied, "apply")?;
     if json {
         let skipped = tasks
@@ -653,7 +676,8 @@ pub fn run(dry_run: bool, yes: bool, json: bool, select_file: Option<&str>) -> R
             unavailable,
             freed_bytes: freed,
         };
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        let _ = writeln!(out, "{}", serde_json::to_string_pretty(&report)?);
+        let _ = out.flush();
     }
     Ok(())
 }

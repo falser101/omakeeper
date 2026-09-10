@@ -76,7 +76,7 @@ Item {
     proc.command = ["bash", "-lc",
       "mkdir -p " + JSON.stringify(root.tmpDir) +
       " && printf %s " + JSON.stringify(payload) + " > " + JSON.stringify(path) +
-      " && exec " + JSON.stringify(root.bin) + " optimize --yes --select-file " + JSON.stringify(path)]
+      " && exec " + JSON.stringify(root.bin) + " optimize --yes --select-file " + JSON.stringify(path) + " --json"]
     proc.running = true
     return true
   }

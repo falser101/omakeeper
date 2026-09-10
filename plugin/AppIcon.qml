@@ -8,6 +8,7 @@ Item {
   property string iconName: ""
   property var appLibrary: null
   property string fallbackText: "?"
+  property bool showFallback: true
   property color foreground: Color.menu.text
   property int pixelSize: 28
 
@@ -50,7 +51,7 @@ Item {
     color: Util.alpha(root.foreground, 0.16)
     border.width: 1
     border.color: Util.alpha(root.foreground, 0.18)
-    visible: img.status !== Image.Ready
+    visible: root.showFallback && img.status !== Image.Ready
     Text {
       anchors.centerIn: parent
       text: String(root.fallbackText || "?").replace(/^[^A-Za-z0-9]+/, "").charAt(0).toUpperCase() || "?"

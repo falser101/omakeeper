@@ -34,9 +34,10 @@ Item {
   property bool stamps: false
   // Full-window edge fields stay static; only wordmarks/marquees animate.
   property bool animate: true
-  // Hover-like highlight sweeping left to right across the wordmark.
+  // Hover-like highlight ping-ponging across the wordmark (L→R then R→L).
   property bool sweep: false
   property real sweepPhase: 0
+  property int sweepDir: 1
 
   readonly property bool busy: root.mood === "busy" || root.spinning
   readonly property bool celebrating: root.mood === "celebrate"
@@ -91,7 +92,7 @@ Item {
   property bool animateMark: true
   Behavior on markScale {
     enabled: root.animateMark
-    NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+    NumberAnimation { duration: 560; easing.type: Easing.InOutCubic }
   }
 
   implicitWidth: root.fillHost ? 0 : Math.ceil(F.WORD_W * root.wmCW)
@@ -239,17 +240,25 @@ Item {
     root.etching = false
     root.etchCells = []
     root.sweepPhase = 0
+    root.sweepDir = 1
     root.targetStrength = 1
     root.pointerY = stage.height / 2
     root.pointerX = (stage.width - F.WORD_W * root.wmCW) / 2
-    root.sweep = true
   }
 
   onSweepChanged: {
-    if (root.sweep)
+    if (root.sweep) {
       root.restartSweep()
-    else
-      root.targetStrength = 0
+    } else {
+      if (hover.containsMouse) {
+        root.targetStrength = 1
+      } else {
+        root.targetStrength = 0
+        root.strength = 0
+        root.pointerX = -1e4
+        root.pointerY = -1e4
+      }
+    }
   }
 
   Item {
@@ -624,10 +633,14 @@ Item {
       var now = Date.now()
       var ts = (now - root.t0) / 1000
       if (root.sweep) {
-        var prev = root.sweepPhase
-        root.sweepPhase = prev + 0.042
+        root.sweepPhase += 0.042 * root.sweepDir
         if (root.sweepPhase >= 1) {
-          root.sweepPhase -= 1
+          root.sweepPhase = 1
+          root.sweepDir = -1
+          root.sweepCycled()
+        } else if (root.sweepPhase <= 0) {
+          root.sweepPhase = 0
+          root.sweepDir = 1
           root.sweepCycled()
         }
         var markW = F.WORD_W * root.wmCW
@@ -636,7 +649,7 @@ Item {
         root.pointerX = x0 + (markW + pad * 2) * root.sweepPhase
         root.pointerY = stage.height / 2
         root.targetStrength = 1
-      } else {
+      } else if (root.spriteGoal > 0.01) {
         var rx = 0.44 * (1 + 0.1 * Math.sin(ts * 0.11))
         var ry = 0.38 * (1 + 0.1 * Math.sin(ts * 0.09 + 2))
         root.spriteX = stage.width * (0.5 + rx * Math.sin(ts * 0.65))

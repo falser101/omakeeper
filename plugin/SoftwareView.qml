@@ -52,7 +52,10 @@ Item {
   readonly property bool loading: root.scanning && root.packages.length === 0 && !root.stageApply && !root.stageDone
   property bool playSweep: true
   property bool sweepDone: false
-  readonly property bool holdLanding: (root.loading || root.playSweep) && !root.stageApply && !root.stageDone
+  property bool heroMotion: false
+  readonly property bool holdLanding: root.loading && !root.stageApply && !root.stageDone
+
+  Component.onCompleted: Qt.callLater(function() { root.heroMotion = true })
 
   function startIntro() {
     if (root.stageApply || root.stageDone)
@@ -83,7 +86,7 @@ Item {
       root.parkLanding()
   }
   onLoadingChanged: {
-    if (!root.loading && root.sweepDone)
+    if (!root.loading)
       root.playSweep = false
   }
   function snapshotRemovedIcons() {
@@ -438,17 +441,105 @@ Item {
     return n
   }
 
+  function autostartGroupOf(item) {
+    if (item && item.locked) return "locked"
+    if (item && item.user_added) return "user"
+    return "system"
+  }
+
+  function autostartGroupLabel(group) {
+    if (group === "user") return tr("soft.autostartGroupUser")
+    if (group === "locked") return tr("soft.autostartGroupLocked")
+    return tr("soft.autostartGroupSystem")
+  }
+
+  function autostartStripe(group) {
+    if (group === "user") return root.accent
+    if (group === "locked") return Util.alpha(root.foreground, 0.22)
+    return Util.alpha(root.foreground, 0.5)
+  }
+
+  function tagAutostart(item, group) {
+    return {
+      id: item.id,
+      name: item.name,
+      description: item.description || "",
+      exec: item.exec || "",
+      icon: item.icon || "",
+      enabled: !!item.enabled,
+      source: item.source || "",
+      path: item.path || "",
+      user_added: !!item.user_added,
+      locked: !!item.locked,
+      group: group,
+      kind: "item"
+    }
+  }
+
   readonly property var visibleAutostart: {
     var _ = root.revision
+    var openMap = root.autostartOpen
     var q = String(root.autostartQuery || "").toLowerCase()
     var src = root.addingAutostart ? (root.autostartAvailable || []) : (root.autostartItems || [])
-    if (!q) return src
-    var out = []
+    var filtered = []
     for (var i = 0; i < src.length; i++) {
-      var hay = ((src[i].name || "") + " " + (src[i].description || "") + " " + (src[i].id || "")).toLowerCase()
-      if (hay.indexOf(q) >= 0) out.push(src[i])
+      if (q) {
+        var hay = ((src[i].name || "") + " " + (src[i].description || "") + " " + (src[i].id || "")).toLowerCase()
+        if (hay.indexOf(q) < 0) continue
+      }
+      filtered.push(src[i])
+    }
+    if (root.addingAutostart) {
+      var pick = []
+      for (var p = 0; p < filtered.length; p++)
+        pick.push(root.tagAutostart(filtered[p], "pick"))
+      return pick
+    }
+    var buckets = { user: [], system: [], locked: [] }
+    for (var j = 0; j < filtered.length; j++) {
+      var item = filtered[j]
+      var g = root.autostartGroupOf(item)
+      buckets[g].push(root.tagAutostart(item, g))
+    }
+    var order = ["user", "system", "locked"]
+    var out = []
+    for (var o = 0; o < order.length; o++) {
+      var group = order[o]
+      var list = buckets[group]
+      if (!list.length) continue
+      var open = openMap[group] !== false
+      out.push({
+        kind: "header",
+        group: group,
+        count: list.length,
+        open: open,
+        id: "header-" + group,
+        name: "",
+        description: "",
+        icon: "",
+        enabled: false,
+        user_added: false,
+        locked: false
+      })
+      if (!open) continue
+      for (var k = 0; k < list.length; k++)
+        out.push(list[k])
     }
     return out
+  }
+
+  property var autostartOpen: ({ user: true, system: true, locked: true })
+
+  function isAutostartOpen(group) {
+    return root.autostartOpen[group] !== false
+  }
+
+  function toggleAutostartGroup(group) {
+    var n = { user: true, system: true, locked: true }
+    for (var k in root.autostartOpen)
+      n[k] = root.autostartOpen[k]
+    n[group] = !root.isAutostartOpen(group)
+    root.autostartOpen = n
   }
 
   readonly property int autostartOnCount: {
@@ -524,9 +615,9 @@ Item {
       : Style.space(12)
     mood: "idle"
     drawField: false
-    sweep: root.playSweep
-    interactive: !root.playSweep
-    animateMark: !root.holdLanding
+    sweep: root.playSweep && root.holdLanding
+    interactive: !root.holdLanding || !root.playSweep
+    animateMark: root.heroMotion
     markScale: root.holdLanding ? 1.0 : App.CONTENT_MARK_SCALE
     creatureSize: root.holdLanding
       ? Math.min(Style.space(220), parent.width * 0.22)
@@ -538,8 +629,12 @@ Item {
     accent: root.accent
     urgent: root.urgent
     Behavior on y {
-      enabled: !root.holdLanding
-      NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+      enabled: root.heroMotion
+      NumberAnimation { duration: 560; easing.type: Easing.InOutCubic }
+    }
+    Behavior on creatureSize {
+      enabled: root.heroMotion
+      NumberAnimation { duration: 560; easing.type: Easing.InOutCubic }
     }
     onSweepCycled: {
       root.sweepDone = true
@@ -550,15 +645,21 @@ Item {
 
   ListView {
     id: list
-    visible: !root.holdLanding && root.subtab === "remove" && !root.stageApply && !root.stageDone
+    visible: root.subtab === "remove" && !root.stageApply && !root.stageDone
+    opacity: root.holdLanding ? 0 : 1
+    enabled: !root.holdLanding && visible
     anchors.left: parent.left
     anchors.right: parent.right
-    anchors.rightMargin: visible && root.visiblePkgs.length ? Style.space(32) : 0
+    anchors.rightMargin: visible && !root.holdLanding && root.visiblePkgs.length ? Style.space(32) : 0
     anchors.top: hero.bottom
     anchors.topMargin: Style.spacing.lg
     anchors.bottom: footer.top
     anchors.bottomMargin: Style.spacing.md
     clip: true
+    Behavior on opacity {
+      enabled: root.heroMotion
+      NumberAnimation { duration: 420; easing.type: Easing.OutCubic }
+    }
     spacing: Style.spacing.sm
     model: root.visiblePkgs
     boundsBehavior: Flickable.StopAtBounds
@@ -909,17 +1010,96 @@ Item {
 
     delegate: Rectangle {
       required property var modelData
+      readonly property bool isHeader: modelData.kind === "header"
       width: autoList.width
-      height: Style.space(56)
-      radius: Math.max(Style.cornerRadius, Style.space(8))
-      color: root.cardFill(rowMouse.containsMouse, true)
-      opacity: modelData.locked ? 0.55 : 1
+      height: isHeader ? Style.space(36) : Style.space(52)
+      radius: isHeader ? 0 : Math.max(Style.cornerRadius, Style.space(8))
+      color: isHeader ? "transparent" : root.cardFill(rowMouse.containsMouse, true)
+      opacity: isHeader ? 1 : (modelData.locked ? 0.55 : 1)
+      clip: !isHeader
+
+      MouseArea {
+        visible: isHeader
+        anchors.fill: parent
+        hoverEnabled: true
+        onClicked: root.toggleAutostartGroup(modelData.group)
+      }
+
+      Rectangle {
+        visible: isHeader
+        width: Style.space(4)
+        height: Style.space(16)
+        radius: 1
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(2)
+        anchors.verticalCenter: parent.verticalCenter
+        color: root.autostartStripe(modelData.group)
+      }
+
+      Rectangle {
+        visible: isHeader
+        height: Style.space(22)
+        radius: height / 2
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(14)
+        anchors.verticalCenter: parent.verticalCenter
+        color: modelData.group === "user"
+          ? Util.alpha(root.accent, 0.2)
+          : (modelData.group === "locked" ? "transparent" : Util.alpha(root.foreground, 0.08))
+        border.width: modelData.group === "locked" ? 1 : 0
+        border.color: Util.alpha(root.foreground, 0.28)
+        width: groupLabel.implicitWidth + Style.space(16)
+        Text {
+          id: groupLabel
+          anchors.centerIn: parent
+          text: root.autostartGroupLabel(modelData.group)
+          color: modelData.group === "user" ? root.accent : root.foreground
+          opacity: modelData.group === "user" ? 1 : (modelData.group === "locked" ? 0.55 : 0.75)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+      }
+
+      Text {
+        visible: isHeader
+        anchors.right: headerChevron.left
+        anchors.rightMargin: Style.spacing.sm
+        anchors.verticalCenter: parent.verticalCenter
+        text: String(modelData.count || 0)
+        color: root.foreground
+        opacity: 0.4
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      Text {
+        id: headerChevron
+        visible: isHeader
+        anchors.right: parent.right
+        anchors.rightMargin: Style.spacing.md
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(22)
+        horizontalAlignment: Text.AlignRight
+        text: modelData.open ? "⌄" : "›"
+        color: root.foreground
+        opacity: 0.45
+        font.pixelSize: Style.font.body
+      }
+
+      Rectangle {
+        visible: !isHeader && !root.addingAutostart
+        width: Style.space(4)
+        height: parent.height
+        color: root.autostartStripe(modelData.group)
+      }
 
       MouseArea {
         id: rowMouse
+        visible: !isHeader
         anchors.fill: parent
         hoverEnabled: true
-        enabled: !modelData.locked || root.addingAutostart
+        enabled: !isHeader && (!modelData.locked || root.addingAutostart)
         onClicked: {
           if (root.addingAutostart)
             root.autostartAdd(modelData.id)
@@ -930,8 +1110,9 @@ Item {
 
       CheckGlyph {
         id: autoBox
+        visible: !isHeader
         anchors.left: parent.left
-        anchors.leftMargin: Style.spacing.md
+        anchors.leftMargin: Style.spacing.md + (root.addingAutostart ? 0 : Style.space(4))
         anchors.verticalCenter: parent.verticalCenter
         checkState: (!root.addingAutostart && modelData.enabled) ? "all" : "none"
         interactive: !modelData.locked && !root.addingAutostart
@@ -945,6 +1126,7 @@ Item {
 
       Item {
         id: autoIcon
+        visible: !isHeader
         anchors.left: autoBox.right
         anchors.leftMargin: Style.space(10)
         anchors.verticalCenter: parent.verticalCenter
@@ -961,6 +1143,7 @@ Item {
       }
 
       Column {
+        visible: !isHeader
         anchors.left: autoIcon.right
         anchors.leftMargin: Style.space(10)
         anchors.right: autoTail.left
@@ -977,15 +1160,8 @@ Item {
         }
         Text {
           width: parent.width
-          text: {
-            if (root.addingAutostart)
-              return modelData.description || ""
-            if (modelData.locked)
-              return tr("soft.autostartLocked")
-            if (modelData.enabled)
-              return tr("soft.autostartOn") + "  ·  " + (modelData.user_added ? tr("soft.autostartUser") : tr("soft.autostartSystem"))
-            return tr("soft.autostartOff")
-          }
+          visible: root.addingAutostart && text.length > 0
+          text: modelData.description || ""
           elide: Text.ElideRight
           color: root.foreground
           opacity: 0.5
@@ -996,7 +1172,8 @@ Item {
 
       Text {
         id: autoTail
-        visible: !root.addingAutostart && !!modelData.user_added
+        visible: !isHeader && !root.addingAutostart && !!modelData.user_added
+        z: 2
         anchors.right: parent.right
         anchors.rightMargin: Style.spacing.md
         anchors.verticalCenter: parent.verticalCenter
@@ -1008,7 +1185,11 @@ Item {
         MouseArea {
           anchors.fill: parent
           anchors.margins: -6
-          onClicked: root.autostartRemove(modelData.id)
+          z: 2
+          onClicked: function(mouse) {
+            mouse.accepted = true
+            root.autostartRemove(modelData.id)
+          }
         }
       }
     }
@@ -1182,8 +1363,8 @@ Item {
       mood: "idle"
       markScale: 1.0
       showCaption: false
-      interactive: false
-      sweep: true
+      interactive: true
+      sweep: false
       accent: root.accent
       urgent: root.urgent
       foreground: root.foreground
@@ -1252,7 +1433,8 @@ Item {
       mood: "celebrate"
       markScale: 0.72
       showCaption: false
-      interactive: false
+      interactive: true
+      sweep: false
       etch: false
       stamps: false
       accent: root.accent

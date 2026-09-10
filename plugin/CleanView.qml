@@ -59,7 +59,11 @@ Item {
   readonly property bool stageDone: root.phase === "done" && !root.applying
   property bool playSweep: false
   property bool sweepDone: false
-  readonly property bool holdLanding: root.idle || root.scanning || root.playSweep
+  property bool heroMotion: false
+  readonly property bool holdLanding: root.idle || root.scanning
+  readonly property bool heroCentered: root.holdLanding || root.stageApply || root.stageDone
+
+  Component.onCompleted: Qt.callLater(function() { root.heroMotion = true })
 
   function beginScan() {
     root.sweepDone = false
@@ -71,7 +75,7 @@ Item {
   onScanningChanged: {
     if (root.scanning)
       root.playSweep = true
-    else if (root.sweepDone)
+    else
       root.playSweep = false
   }
   readonly property var rows: {
@@ -88,50 +92,110 @@ Item {
   }
 
   onItemsChanged: root.expanded = ({})
+  property int pinIndex: -1
 
   function toggleCategory(cat) {
+    var opening = !root.expanded[cat]
+    var idx = -1
+    var rows = root.rows
+    for (var i = 0; i < rows.length; i++) {
+      if ((rows[i].kind === "header" && rows[i].category === cat) || rows[i].id === cat) {
+        idx = i
+        break
+      }
+    }
     var n = {}
     for (var k in root.expanded) n[k] = root.expanded[k]
     n[cat] = !n[cat]
     root.expanded = n
+    root.pinIndex = opening ? idx : -1
+    if (opening)
+      Qt.callLater(root.revealPinnedRow)
+  }
+
+  function revealPinnedRow() {
+    if (!list.visible || root.pinIndex < 0)
+      return
+    var idx = root.pinIndex
+    var item = rowRepeater.itemAt(idx)
+    if (!item)
+      return
+    root.pinIndex = -1
+    var endY = item.y + item.height
+    var rows = root.rows
+    for (var i = idx + 1; i < rows.length; i++) {
+      if (rows[i].kind === "header" || rows[i].kind === "group")
+        break
+      var child = rowRepeater.itemAt(i)
+      if (child)
+        endY = child.y + child.height
+    }
+    var viewBottom = list.contentY + list.height
+    if (endY <= viewBottom - 8)
+      return
+    var maxY = Math.max(0, list.contentHeight - list.height)
+    list.contentY = Math.max(0, Math.min(item.y, maxY))
   }
 
   PixelField {
     id: hero
-    visible: !root.stageApply && !root.stageDone
+    visible: true
+    z: 4
     anchors.horizontalCenter: parent.horizontalCenter
     width: parent.width
-    y: root.holdLanding
+    y: root.heroCentered
       ? App.landingHeroY(parent.height, implicitHeight, Style.space(24))
       : Style.space(12)
     mood: "idle"
     drawField: false
-    etch: root.idle && !root.playSweep
+    etch: root.idle && !root.playSweep && !root.stageApply
     stamps: false
-    sweep: root.playSweep
-    interactive: !root.playSweep
-    animateMark: !root.holdLanding
+    sweep: root.scanning || root.stageApply
+    interactive: !root.scanning && !root.stageApply
+    animateMark: root.heroMotion
     showCaption: !root.holdLanding
-    markScale: (root.items.length && !root.holdLanding) ? App.CONTENT_MARK_SCALE : 1.0
+    markScale: root.heroCentered ? 1.0 : App.CONTENT_MARK_SCALE
     Behavior on y {
-      enabled: !root.holdLanding
-      NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+      enabled: root.heroMotion
+      NumberAnimation { duration: 560; easing.type: Easing.InOutCubic }
     }
-    creatureSize: root.holdLanding
+    creatureSize: root.heroCentered
       ? Math.min(Style.space(220), parent.width * 0.22)
       : Style.space(96)
+    Behavior on creatureSize {
+      enabled: root.heroMotion
+      NumberAnimation { duration: 560; easing.type: Easing.InOutCubic }
+    }
     headline: {
       if (root.scanning) return ""
-      if (root.applying) return tr("clean.applying")
-      if (root.phase === "done" && root.idle) return App.formatBytes(root.freedNow)
+      if (root.stageApply) return App.formatBytes(root.freedNow)
+      if (root.stageDone) return App.formatBytes(root.freedNow)
       if (root.items.length && root.count) return App.formatBytes(root.bytes)
       if (root.items.length) return App.formatBytes(App.allBytes(root.items))
       return ""
     }
     subline: {
       if (root.scanning) return ""
-      if (root.applying) return tr("clean.applyingHint")
-      if (root.phase === "done" && root.idle) return tr("clean.doneHint", { bytes: App.formatBytes(root.totals.cleaned) })
+      if (root.stageApply) {
+        var cur = root.progressCurrent || ({})
+        var name = App.cleanItemLabel(cur, function(k, v) { return tr(k, v) }, root.uiLang) || tr("clean.applying")
+        return tr("clean.sprint", {
+          name: name,
+          n: Math.max(1, root.progressIndex),
+          t: Math.max(root.progressTotal, 1)
+        })
+      }
+      if (root.stageDone) {
+        var n = Math.max(root.progressLog.length, root.progressTotal)
+        var vars = {
+          n: n,
+          skipped: root.skipped,
+          total: App.formatBytes(root.totals.cleaned)
+        }
+        if (root.skipped > 0)
+          return tr("clean.doneSubFail", vars)
+        return tr("clean.doneSub", vars)
+      }
       if (root.items.length)
         return tr("clean.reviewHint", { count: root.count, total: root.items.length })
       return ""
@@ -143,7 +207,7 @@ Item {
     urgent: root.urgent
     onSweepCycled: {
       root.sweepDone = true
-      if (!root.scanning)
+      if (!root.scanning && !root.stageApply)
         root.playSweep = false
     }
   }
@@ -161,9 +225,11 @@ Item {
     onClicked: root.beginScan()
   }
 
-  ListView {
+  Flickable {
     id: list
-    visible: root.items.length > 0 && !root.holdLanding && !root.stageApply && !root.stageDone
+    visible: root.items.length > 0 && !root.stageApply && !root.stageDone
+    opacity: root.holdLanding ? 0 : 1
+    enabled: !root.holdLanding && visible
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: hero.bottom
@@ -171,10 +237,30 @@ Item {
     anchors.bottom: footer.top
     anchors.bottomMargin: Style.spacing.md
     clip: true
-    spacing: Style.spacing.sm
+    Behavior on opacity {
+      enabled: root.heroMotion
+      NumberAnimation { duration: 420; easing.type: Easing.OutCubic }
+    }
     boundsBehavior: Flickable.StopAtBounds
-    model: root.rows.length
-    delegate: Rectangle {
+    contentWidth: width
+    contentHeight: col.height
+    onContentHeightChanged: {
+      var maxY = Math.max(0, contentHeight - height)
+      if (contentY > maxY)
+        contentY = maxY
+      if (root.pinIndex >= 0)
+        Qt.callLater(root.revealPinnedRow)
+    }
+
+    Column {
+      id: col
+      width: list.width
+      spacing: Style.spacing.sm
+
+      Repeater {
+        id: rowRepeater
+        model: root.rows.length
+        Rectangle {
       required property int index
       readonly property var modelData: root.rows[index] || ({ kind: "header", category: "", bytes: 0, count: 0, open: false })
       readonly property var catCheck: {
@@ -324,28 +410,52 @@ Item {
               root.toggleId(modelData.id)
           }
         }
-        Text {
-          id: itemChevron
-          visible: modelData.kind === "group"
+        AppIcon {
+          id: agentIcon
+          readonly property bool isAiGroup: modelData.kind === "group" && !!modelData.group
+          readonly property string resolvedIcon: {
+            var _ = root.desktopIndex
+            if (agentIcon.isAiGroup) {
+              var n = App.aiGroupIcon(modelData.group, root.desktopIndex)
+              if (n.indexOf("assets/") === 0)
+                return Qt.resolvedUrl(n)
+              return n
+            }
+            if (modelData.category === "apps" && modelData.kind !== "child")
+              return App.lookupAppIcon(modelData, root.desktopIndex)
+            return ""
+          }
+          visible: agentIcon.isAiGroup || (modelData.category === "apps" && modelData.kind !== "child" && !!resolvedIcon)
           anchors.left: itemBox.right
-          anchors.leftMargin: Style.spacing.sm
+          anchors.leftMargin: visible ? Style.space(12) : 0
           anchors.verticalCenter: parent.verticalCenter
-          width: visible ? Style.space(14) : 0
-          text: modelData.open ? "⌄" : "›"
-          color: root.foreground
-          opacity: 0.45
-          font.pixelSize: Style.font.body
+          width: visible ? Style.space(22) : 0
+          height: Style.space(22)
+          pixelSize: Style.space(22)
+          iconName: resolvedIcon
+          showFallback: agentIcon.isAiGroup
+          fallbackText: {
+            var _ = root.uiLang
+            return App.cleanRowLabel(modelData, function(k, v) { return tr(k, v) }, root.uiLang)
+          }
+          appLibrary: root.appLibrary
+          foreground: root.foreground
         }
         Column {
-          anchors.left: itemChevron.visible ? itemChevron.right : itemBox.right
-          anchors.leftMargin: Style.spacing.sm
+          anchors.left: agentIcon.visible ? agentIcon.right : itemBox.right
+          anchors.leftMargin: Style.space(12)
           anchors.right: itemCount.left
           anchors.rightMargin: Style.spacing.sm
           anchors.verticalCenter: parent.verticalCenter
           spacing: 1
           Text {
             width: parent.width
-            text: modelData.label + (modelData.skip_reason ? "  (" + modelData.skip_reason + ")" : "")
+            text: {
+              var _ = root.uiLang
+              var name = App.cleanRowLabel(modelData, function(k, v) { return tr(k, v) }, root.uiLang)
+              var skip = App.cleanSkipReason(modelData.skip_reason, function(k, v) { return tr(k, v) })
+              return name + (skip ? "  (" + skip + ")" : "")
+            }
             elide: Text.ElideRight
             color: root.foreground
             font.family: root.fontFamily
@@ -377,7 +487,7 @@ Item {
         }
         Text {
           id: itemSize
-          anchors.right: itemReveal.left
+          anchors.right: itemReveal.visible ? itemReveal.left : (itemChevron.visible ? itemChevron.left : parent.right)
           anchors.rightMargin: Style.spacing.sm
           anchors.verticalCenter: parent.verticalCenter
           text: App.formatBytes(modelData.bytes)
@@ -389,9 +499,11 @@ Item {
         Rectangle {
           id: itemReveal
           z: 3
-          anchors.right: parent.right
+          visible: !!modelData.path
+          anchors.right: itemChevron.visible ? itemChevron.left : parent.right
+          anchors.rightMargin: itemChevron.visible ? Style.spacing.sm : 0
           anchors.verticalCenter: parent.verticalCenter
-          width: Style.space(26)
+          width: visible ? Style.space(26) : 0
           height: Style.space(26)
           radius: width / 2
           color: revealMouse.containsMouse ? Util.alpha(root.foreground, 0.10) : "transparent"
@@ -415,39 +527,33 @@ Item {
             }
           }
         }
+        Text {
+          id: itemChevron
+          visible: modelData.kind === "group"
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          width: visible ? Style.space(22) : 0
+          horizontalAlignment: Text.AlignRight
+          text: modelData.open ? "⌄" : "›"
+          color: root.foreground
+          opacity: 0.45
+          font.pixelSize: Style.font.body
+        }
       }
     }
-  }
+        }
+      }
+    }
 
   Item {
     visible: root.stageApply
     enabled: root.stageApply
     anchors.fill: parent
 
-    PixelField {
-      id: applyHero
-      anchors.horizontalCenter: parent.horizontalCenter
-      y: Style.space(24)
-      width: parent.width
-      mood: "busy"
-      drawField: false
-      creatureSize: Math.min(Style.space(180), parent.width * 0.22)
-      headline: App.formatBytes(root.freedNow)
-      subline: {
-        var cur = root.progressCurrent || ({})
-        var name = cur.label || tr("clean.applying")
-        var n = Math.max(1, root.progressIndex)
-        var t = Math.max(root.progressTotal, 1)
-        return tr("clean.sprint", { name: name, n: n, t: t })
-      }
-      foreground: root.foreground
-      fontFamily: root.fontFamily
-    }
-
     ListView {
       anchors.left: parent.left
       anchors.right: parent.right
-      anchors.top: applyHero.bottom
+      anchors.top: hero.bottom
       anchors.topMargin: Style.spacing.md
       anchors.bottom: parent.bottom
       anchors.bottomMargin: Style.spacing.md
@@ -480,7 +586,7 @@ Item {
           Text {
             width: Math.max(40, parent.width - Style.space(120))
             anchors.verticalCenter: parent.verticalCenter
-            text: modelData.label || ""
+            text: App.cleanItemLabel(modelData, function(k, v) { return tr(k, v) }, root.uiLang) || modelData.label || ""
             elide: Text.ElideRight
             color: root.foreground
             font.family: root.fontFamily
@@ -504,29 +610,83 @@ Item {
     enabled: root.stageDone
     anchors.fill: parent
 
-    PixelField {
-      id: doneHero
-      anchors.horizontalCenter: parent.horizontalCenter
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.verticalCenterOffset: -Style.space(24)
-      width: parent.width
-      mood: "celebrate"
-      drawField: false
-      creatureSize: Math.min(Style.space(200), parent.width * 0.22)
-      headline: App.formatBytes(root.freedNow)
-      subline: tr("clean.doneSub", {
-        mins: App.fourKMinutes(root.freedNow),
-        skipped: root.skipped,
-        bytes: App.formatBytes(root.totals.cleaned)
-      })
-      foreground: root.foreground
-      fontFamily: root.fontFamily
+    ListView {
+      visible: root.progressLog.length > 0
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.top: doneBack.bottom
+      anchors.topMargin: Style.spacing.md
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: Style.spacing.md
+      clip: true
+      spacing: Style.spacing.sm
+      boundsBehavior: Flickable.StopAtBounds
+      model: root.progressLog.length
+      delegate: Rectangle {
+        required property int index
+        readonly property var modelData: root.progressLog[index] || ({})
+        width: ListView.view ? ListView.view.width : 0
+        height: Style.space(48)
+        radius: Style.cornerRadius
+        color: root.cardFill(false, false)
+        opacity: modelData.ok === false ? 0.55 : 1
+
+        Text {
+          id: doneMark
+          anchors.left: parent.left
+          anchors.leftMargin: Style.spacing.md
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.space(18)
+          text: modelData.ok === false ? "✕" : "✓"
+          color: modelData.ok === false ? root.urgent : root.foreground
+          opacity: 0.8
+        }
+        Column {
+          anchors.left: doneMark.right
+          anchors.leftMargin: Style.space(12)
+          anchors.right: doneSize.left
+          anchors.rightMargin: Style.spacing.sm
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: 1
+          Text {
+            width: parent.width
+            text: App.cleanItemLabel(modelData, function(k, v) { return tr(k, v) }, root.uiLang) || modelData.label || ""
+            elide: Text.ElideRight
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+          Text {
+            width: parent.width
+            visible: !!modelData.path
+            text: App.shortPath(modelData.path, root.homeDir)
+            elide: Text.ElideMiddle
+            color: root.foreground
+            opacity: 0.4
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+        Text {
+          id: doneSize
+          anchors.right: parent.right
+          anchors.rightMargin: Style.spacing.md
+          anchors.verticalCenter: parent.verticalCenter
+          text: App.formatBytes(modelData.bytes)
+          color: root.foreground
+          opacity: 0.7
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
     }
 
     Button {
-      anchors.horizontalCenter: parent.horizontalCenter
-      anchors.top: doneHero.bottom
-      anchors.topMargin: Style.spacing.md
+      id: doneBack
+      z: 5
+      anchors.horizontalCenter: hero.horizontalCenter
+      anchors.top: hero.bottom
+      anchors.topMargin: Style.space(32)
       text: tr("clean.back")
       selected: true
       onClicked: root.resetRequested()
@@ -540,6 +700,10 @@ Item {
     anchors.right: parent.right
     anchors.bottom: parent.bottom
     height: root.holdLanding ? 0 : Style.space(44)
+    Behavior on height {
+      enabled: root.heroMotion
+      NumberAnimation { duration: 420; easing.type: Easing.InOutCubic }
+    }
 
     Row {
       visible: root.items.length > 0 && !root.holdLanding
